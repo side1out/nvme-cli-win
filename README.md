@@ -11,7 +11,98 @@
 
 NVM-Express user space tooling for Linux.
 
-## Build from source
+## Windows Port
+
+This repository contains a Windows port of nvme-cli and libnvme, enabling NVMe management on Windows systems.
+
+### Architecture
+
+The Windows port is based on **nvme-cli v2.15** and **libnvme v1.15**, with Windows-specific compatibility patches:
+
+- **Build System**: Meson + Ninja with MSYS2/MinGW-w64 toolchain
+- **Compiler**: GCC 15.2.0 (MSYS2)
+- **Dependencies**: 
+  - json-c (0.18) for JSON output support
+  - Windows SDK for native IOCTL interfaces
+  - shlwapi for path manipulation
+
+**Directory Structure:**
+- `windows/` - Windows-specific compatibility layer (types, compat functions)
+- `subprojects/libnvme` - Directory junction to separate libnvme-win repository
+- Windows compatibility implemented via `#ifdef WINDOWS_GCC` preprocessor guards
+
+### Current Status (January 2026)
+
+✅ **Working:**
+- Successfully compiles on Windows with MSYS2/MinGW
+- nvme.exe builds and runs (2.75 MB executable)
+- libnvme and libnvme-mi DLLs compile
+- Basic nvme-cli command structure operational
+- JSON output support enabled
+
+⚠️ **Limitations:**
+- Based on v1.15 codebase (upstream is at v1.16.1)
+- Some features disabled: nbft.c, fabrics.c, nvme-rpmb.c
+- NBFT and fabrics support excluded from Windows build
+- Full device compatibility testing pending
+
+🔧 **Known Issues:**
+- Need to merge upstream v1.16.1 improvements
+- May require Windows-specific IOCTL implementation refinement
+- Documentation for Windows-specific features incomplete
+
+### Building on Windows
+
+**Prerequisites:**
+1. Install MSYS2 from https://www.msys2.org/
+2. Install required packages:
+   ```bash
+   pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-meson \
+             mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-json-c
+   ```
+
+**Setup libnvme subproject:**
+```bash
+# Clone libnvme-win separately
+git clone https://github.com/side1out/libnvme-win.git ../libnvme-win
+
+# Create directory junction (Windows) or symlink (MSYS2)
+cd nvme-cli-win
+cmd /c "mklink /J subprojects\libnvme ..\libnvme-win"
+```
+
+**Build:**
+```bash
+# Configure (debug build)
+meson setup .vscbuild --buildtype=debug
+
+# Or configure (release build)
+meson setup .vscbuild --buildtype=release
+
+# Compile
+meson compile -C .vscbuild
+
+# Binary location: .vscbuild/nvme.exe
+```
+
+**Testing:**
+```bash
+.vscbuild/nvme.exe --version
+```
+
+### Windows Port Development Notes
+
+The port maintains compatibility with upstream by:
+- Using conditional compilation (`#ifdef WINDOWS_GCC`)
+- Separate meson.build sections for Windows vs Linux
+- Windows compatibility layer in `windows/` directory
+- Preserving ability to merge upstream improvements
+
+For Windows-specific development, modifications to libnvme should be made in the separate libnvme-win repository accessed via the junction.
+
+---
+
+## Build from source (Linux)
 
 nvme-cli uses meson as its build system. There is more than one way to configure and
 build the project in order to mitigate meson dependency on the build environment.

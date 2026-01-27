@@ -1,0 +1,61 @@
+{
+  // Tell VS Code to use the real compiler & database
+  "C_Cpp.default.compilerPath": "C:/msys64/mingw64/bin/gcc.exe",
+  "C_Cpp.default.intelliSenseMode": "windows-gcc-x64",
+
+  // Let IntelliSense follow the same flags Meson/Ninja use
+  "C_Cpp.default.compileCommands": "c:\\Users\\James Huey\\Source\\repos\\KSMLibrary\\nvme-cli-master\\nvme-cli-master_add_win\\builddir/compile_commands.json",
+
+  // Optional fallback if you don’t use Meson
+  "C_Cpp.default.includePath": [
+    "${workspaceFolder}/include",
+    "C:/msys64/mingw64/include"
+  ],
+
+  // Make error squiggles less noisy
+  "C_Cpp.errorSquiggles": "disabled",
+  "C_Cpp.codeAnalysis.runAutomatically": false,
+  "C_Cpp.intelliSenseEngine": "disabled",
+
+  // Show headers and definitions cleanly
+  "files.associations": {
+    "*.h": "c"
+  },
+
+  // Hide generated & external stuff from Problems and Explorer
+  "files.exclude": {
+    "**/.vscbuild*/": true,
+    "**/out*/": true,
+    "**/third_party/**": true
+  },
+  "C_Cpp.files.exclude": {
+    "**/.vscbuild*/": true,
+    "**/out*/": true,
+    "**/third_party/**": true
+  },
+
+  // Improve navigation & IntelliSense responsiveness
+  "C_Cpp.loggingLevel": "Warning",
+  "C_Cpp.intelliSenseCacheSize": 512,
+
+  // Default format style (optional)
+  "C_Cpp.clang_format_style": "file",
+
+  // Terminal environment (so gcc is found easily)
+  "terminal.integrated.env.windows": {
+    "PATH": "C:\\msys64\\mingw64\\bin;${env:PATH}"
+  },
+
+  // Make sure VS Code treats backslashes consistently
+  "C_Cpp.default.pathNormalization": "windows",
+  "C_Cpp.default.configurationProvider": "mesonbuild.mesonbuild",
+
+  // Include subprojects in search results (they're in .gitignore but we're actively developing them)
+  "search.useIgnoreFiles": false,
+  "search.exclude": {
+    "**/.vscbuild": true,
+    "**/builddir": true,
+    "**/node_modules": true,
+    "**/.git": true
+  }
+}

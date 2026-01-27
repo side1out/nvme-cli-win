@@ -1,0 +1,137 @@
+{
+    "tasks": [
+        {
+            "label": "Meson: configure (debug)",
+            "type": "shell",
+            "command": "meson",
+            "args": [
+                "setup",
+                ".vscbuild",
+                "--reconfigure",
+                "--buildtype=debug",
+                "-Dwarning_level=3"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "C:\\msys64\\mingw64\\bin;${env:PATH}"
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Meson: configure (release)",
+            "type": "shell",
+            "command": "meson",
+            "args": [
+                "setup",
+                ".vscbuild",
+                "--reconfigure",
+                "--buildtype=release",
+                "-Dwarning_level=3"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "C:\\msys64\\mingw64\\bin;${env:PATH}"
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Meson: build",
+            "type": "shell",
+            "command": "meson",
+            "args": [
+                "compile",
+                "-C",
+                ".vscbuild"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "C:\\msys64\\mingw64\\bin;${env:PATH}"
+                }
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                {
+                    "base": "$gcc",
+                    "fileLocation": [
+                        "relative",
+                        "${workspaceFolder}/.vscbuild"
+                    ]
+                },
+                {
+                    "owner": "linker",
+                    "fileLocation": "autoDetect",
+                    "pattern": {
+                        "regexp": "^(?:.*[\\/\\\\])?ld(?:\\.exe)?: (error|warning): (.*)$",
+                        "severity": 1,
+                        "message": 2
+                    }
+                },
+                {
+                    "owner": "linker",
+                    "fileLocation": "autoDetect",
+                    "pattern": {
+                        "regexp": "^(?:.*[\\/])?ld(?:\\.exe)?:\\s+(.+?):(\\d+):\\([^)]*\\):\\s+undefined reference to `([^']+)'$",
+                        "file": 1,
+                        "line": 2,
+                        "message": 3,
+                        "severity": 1
+                    }
+                },
+                {
+                    "owner": "linker",
+                    "fileLocation": "autoDetect",
+                    "pattern": {
+                        "regexp": "^(.+?):(\\d+):\\([^)]*\\): undefined reference to `([^']+)'$",
+                        "file": 1,
+                        "line": 2,
+                        "message": 3
+                    }
+                }
+            ]
+        },
+        {
+            "label": "Meson: clean",
+            "type": "shell",
+            "command": "meson",
+            "args": [
+                "compile",
+                "-C",
+                ".vscbuild",
+                "clean"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "C:\\msys64\\mingw64\\bin;${env:PATH}"
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Run app",
+            "type": "shell",
+            "command": "${workspaceFolder}/build/${input:exePath}",
+            "options": {
+                "cwd": "${workspaceFolder}/.vscbuild"
+            },
+            "dependsOn": "Meson: build",
+            "problemMatcher": []
+        }
+    ],
+  "inputs": [
+    {
+      "id": "exePath",
+      "type": "promptString",
+      "description": "Relative path to the built executable (e.g., myapp.exe)",
+      "default": "myapp.exe"
+    }
+  ]
+}

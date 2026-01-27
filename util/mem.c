@@ -3,7 +3,12 @@
 #include <unistd.h>
 #include <malloc.h>
 #include <string.h>
+
+#ifdef WINDOWS_GCC
+#include "../windows/compat.h"
+#else
 #include <sys/mman.h>
+#endif
 
 #include "mem.h"
 
@@ -85,10 +90,12 @@ void *nvme_alloc_huge(size_t len, struct nvme_mem_huge *mh)
 
 	memset(mh->p, 0, mh->len);
 
+	#ifndef WINDOWS_GCC
 	if (madvise(mh->p, mh->len, MADV_HUGEPAGE) < 0) {
 		nvme_free_huge(mh);
 		return NULL;
 	}
+	#endif
 
 	return mh->p;
 }

@@ -1,6 +1,7 @@
 /* CC0 (Public domain) - see LICENSE file for details */
 #ifndef CCAN_LIKELY_H
 #define CCAN_LIKELY_H
+#include "config.h"
 #include <stdbool.h>
 
 #ifndef CCAN_LIKELY_DEBUG

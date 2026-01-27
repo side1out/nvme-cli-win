@@ -3,6 +3,7 @@
 #define CCAN_HTABLE_TYPE_H
 #include <ccan/htable/htable.h>
 #include <ccan/compiler/compiler.h>
+#include "config.h"
 
 /**
  * HTABLE_DEFINE_TYPE - create a set of htable ops for a type

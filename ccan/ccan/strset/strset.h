@@ -1,5 +1,6 @@
 #ifndef CCAN_STRSET_H
 #define CCAN_STRSET_H
+#include "config.h"
 #include <ccan/typesafe_cb/typesafe_cb.h>
 #include <stdlib.h>
 #include <stdbool.h>

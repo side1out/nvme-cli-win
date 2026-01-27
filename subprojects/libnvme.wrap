@@ -1,0 +1,8 @@
+[wrap-git]
+url = https://github.com/side1out/libnvme-win.git
+revision = head
+depth = 1
+
+[provide]
+libnvme = libnvme_dep
+libnvme-mi = libnvme_mi_dep

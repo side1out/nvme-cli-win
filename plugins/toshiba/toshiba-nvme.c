@@ -11,7 +11,9 @@
 #include "nvme.h"
 #include "libnvme.h"
 #include "plugin.h"
+#ifndef WINDOWS_GCC
 #include "linux/types.h"
+#endif
 #include "nvme-print.h"
 
 #define CREATE_CMD
@@ -48,20 +50,29 @@ enum {
 	CODE_1 = 0x10
 };
 
-static int nvme_sct_op(struct nvme_transport_handle *hdl, __u32 opcode,
-		       __u32 cdw10, __u32 cdw11, void *data, __u32 data_len)
+
+static int nvme_sct_op(int fd, __u32 opcode, __u32 cdw10, __u32 cdw11, void *data, __u32 data_len)
 {
-	struct nvme_passthru_cmd cmd = {
-		.opcode		= opcode,
-		.cdw10		= cdw10,
-		.cdw11		= cdw11,
-		.data_len	= data_len,
-		.addr		= (__u64)(uintptr_t)data,
-	};
-	return nvme_submit_admin_passthru(hdl, &cmd);
+	void *metadata = NULL;
+	const __u32 cdw2 = 0;
+	const __u32 cdw3 = 0;
+	const __u32 cdw12 = 0;
+	const __u32 cdw13 = 0;
+	const __u32 cdw14 = 0;
+	const __u32 cdw15 = 0;
+	const __u32 timeout = 0;
+	const __u32 metadata_len = 0;
+	const __u32 namespace_id = 0x0;
+	const __u32 flags = 0;
+	const __u32 rsvd = 0;
+	__u32 result;
+
+	return nvme_admin_passthru(fd, opcode, flags, rsvd, namespace_id, cdw2, cdw3, cdw10, cdw11,
+				   cdw12, cdw13, cdw14, cdw15, data_len, data, metadata_len,
+				   metadata, timeout, &result);
 }
 
-static int nvme_get_sct_status(struct nvme_transport_handle *hdl, __u32 device_mask)
+static int nvme_get_sct_status(int fd, __u32 device_mask)
 {
 	int err;
 	void *data = NULL;
@@ -73,7 +84,7 @@ static int nvme_get_sct_status(struct nvme_transport_handle *hdl, __u32 device_m
 		return -ENOMEM;
 
 	memset(data, 0, data_len);
-	err = nvme_sct_op(hdl, OP_SCT_STATUS, DW10_SCT_STATUS_COMMAND, DW11_SCT_STATUS_COMMAND, data, data_len);
+	err = nvme_sct_op(fd, OP_SCT_STATUS, DW10_SCT_STATUS_COMMAND, DW11_SCT_STATUS_COMMAND, data, data_len);
 	if (err) {
 		fprintf(stderr, "%s: SCT status failed :%d\n", __func__, err);
 		goto end;
@@ -113,7 +124,7 @@ end:
 	return err;
 }
 
-static int nvme_sct_command_transfer_log(struct nvme_transport_handle *hdl, bool current)
+static int nvme_sct_command_transfer_log(int fd, bool current)
 {
 	int err;
 	void *data = NULL;
@@ -132,13 +143,12 @@ static int nvme_sct_command_transfer_log(struct nvme_transport_handle *hdl, bool
 	memcpy(data, &action_code, sizeof(action_code));
 	memcpy(data + 2, &function_code, sizeof(function_code));
 
-	err = nvme_sct_op(hdl, OP_SCT_COMMAND_TRANSFER, DW10_SCT_COMMAND_TRANSFER, DW11_SCT_COMMAND_TRANSFER, data, data_len);
+	err = nvme_sct_op(fd, OP_SCT_COMMAND_TRANSFER, DW10_SCT_COMMAND_TRANSFER, DW11_SCT_COMMAND_TRANSFER, data, data_len);
 	free(data);
 	return err;
 }
 
-static int nvme_sct_data_transfer(struct nvme_transport_handle *hdl, void *data,
-				  size_t data_len, size_t offset)
+static int nvme_sct_data_transfer(int fd, void *data, size_t data_len, size_t offset)
 {
 	__u32 dw10, dw11, lba_count = (data_len) / 512;
 
@@ -152,7 +162,7 @@ static int nvme_sct_data_transfer(struct nvme_transport_handle *hdl, void *data,
 
 	dw10 = (offset << 16) | lba_count;
 	dw11 = (offset >> 16);
-	return nvme_sct_op(hdl, OP_SCT_DATA_TRANSFER, dw10, dw11, data, data_len);
+	return nvme_sct_op(fd, OP_SCT_DATA_TRANSFER, dw10, dw11, data, data_len);
 }
 
 static int d_raw_to_fd(const unsigned char *buf, unsigned int len, int fd)
@@ -196,8 +206,7 @@ static void progress_runner(float progress)
 	fflush(stdout);
 }
 
-static int nvme_get_internal_log(struct nvme_transport_handle *hdl,
-				 const char *const filename, bool current)
+static int nvme_get_internal_log(int fd, const char *const filename, bool current)
 {
 	int err;
 	int o_fd = -1;
@@ -219,7 +228,7 @@ static int nvme_get_internal_log(struct nvme_transport_handle *hdl,
 	unsigned int j;
 	float progress = 0.0;
 
-	err = nvme_sct_command_transfer_log(hdl, current);
+	err = nvme_sct_command_transfer_log(fd, current);
 	if (err) {
 		fprintf(stderr, "%s: SCT command transfer failed\n", __func__);
 		goto end;
@@ -232,7 +241,7 @@ static int nvme_get_internal_log(struct nvme_transport_handle *hdl,
 	memset(page_data, 0, max_pages * page_data_len);
 
 	/* Read the header to get the last log page - offsets 8->11, 12->15, 16->19 */
-	err = nvme_sct_data_transfer(hdl, page_data, page_data_len, 0);
+	err = nvme_sct_data_transfer(fd, page_data, page_data_len, 0);
 	if (err) {
 		fprintf(stderr, "%s: SCT data transfer failed, page 0\n", __func__);
 		goto end;
@@ -276,7 +285,7 @@ static int nvme_get_internal_log(struct nvme_transport_handle *hdl,
 		if (pages_chunk + i >= pages)
 			pages_chunk = pages - i;
 
-		err = nvme_sct_data_transfer(hdl, page_data,
+		err = nvme_sct_data_transfer(fd, page_data,
 					     pages_chunk * page_data_len,
 					     i * page_sector_len);
 		if (err) {
@@ -305,7 +314,7 @@ static int nvme_get_internal_log(struct nvme_transport_handle *hdl,
 	progress = 1.0f;
 	progress_runner(progress);
 	fprintf(stdout, "\n");
-	err = nvme_get_sct_status(hdl, MASK_IGNORE);
+	err = nvme_get_sct_status(fd, MASK_IGNORE);
 	if (err) {
 		fprintf(stderr, "%s: bad SCT status\n", __func__);
 		goto end;
@@ -317,15 +326,14 @@ end:
 	return err;
 }
 
-static int nvme_get_internal_log_file(struct nvme_transport_handle *hdl,
-				      const char *const filename, bool current)
+static int nvme_get_internal_log_file(int fd, const char *const filename, bool current)
 {
 	int err;
 
 	/* Check device supported */
-	err = nvme_get_sct_status(hdl, MASK_0 | MASK_1);
+	err = nvme_get_sct_status(fd, MASK_0 | MASK_1);
 	if (!err)
-		err = nvme_get_internal_log(hdl, filename, current);
+		err = nvme_get_internal_log(fd, filename, current);
 	return err;
 }
 
@@ -345,12 +353,11 @@ struct nvme_xdn_smart_log_c0 {
 	__u8 resv[512 - NR_SMART_ITEMS_C0];
 };
 
-static void default_show_vendor_log_c0(struct nvme_transport_handle *hdl,
-				       __u32 nsid,
-				       struct nvme_xdn_smart_log_c0 *smart)
+static void default_show_vendor_log_c0(struct nvme_dev *dev, __u32 nsid,
+		struct nvme_xdn_smart_log_c0 *smart)
 {
 	printf("Vendor Log Page Directory 0xC0 for NVME device:%s namespace-id:%x\n",
-		nvme_transport_handle_get_name(hdl), nsid);
+		dev->name, nsid);
 	printf("Error Log          : %u\n", smart->items[ERROR_LOG_C0]);
 	printf("SMART Health Log   : %u\n", smart->items[SMART_HEALTH_LOG_C0]);
 	printf("Firmware Slot Info : %u\n", smart->items[FIRMWARE_SLOT_INFO_C0]);
@@ -360,9 +367,8 @@ static void default_show_vendor_log_c0(struct nvme_transport_handle *hdl,
 	printf("SMART Attributes   : %u\n", smart->items[SMART_ATTRIBUTES_C0]);
 }
 
-static int nvme_get_vendor_log(struct nvme_transport_handle *hdl,
-			       __u32 namespace_id, int log_page,
-			       const char *const filename)
+static int nvme_get_vendor_log(struct nvme_dev *dev, __u32 namespace_id,
+			       int log_page, const char *const filename)
 {
 	int err;
 	void *log = NULL;
@@ -374,11 +380,11 @@ static int nvme_get_vendor_log(struct nvme_transport_handle *hdl,
 	}
 
 	/* Check device supported */
-	err = nvme_get_sct_status(hdl, MASK_0 | MASK_1);
+	err = nvme_get_sct_status(dev_fd(dev), MASK_0 | MASK_1);
 	if (err)
 		goto end;
-	err = nvme_get_nsid_log(hdl, namespace_id, false, log_page,
-				log, log_len);
+	err = nvme_get_nsid_log(dev_fd(dev), false, log_page, namespace_id,
+				log_len, log);
 	if (err) {
 		fprintf(stderr, "%s: couldn't get log 0x%x\n", __func__,
 			log_page);
@@ -405,7 +411,7 @@ static int nvme_get_vendor_log(struct nvme_transport_handle *hdl,
 		}
 	} else {
 		if (log_page == 0xc0)
-			default_show_vendor_log_c0(hdl, namespace_id, log);
+			default_show_vendor_log_c0(dev, namespace_id, log);
 		else
 			d(log, log_len, 16, 1);
 	}
@@ -414,14 +420,13 @@ end:
 	return err;
 }
 
-static int vendor_log(int argc, char **argv, struct command *acmd, struct plugin *plugin)
+static int vendor_log(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
 	char *desc = "Get extended SMART information and show it.";
 	const char *namespace = "(optional) desired namespace";
 	const char *output_file = "(optional) binary output filename";
 	const char *log = "(optional) log ID (0xC0, or 0xCA), default 0xCA";
-	_cleanup_nvme_global_ctx_ struct nvme_global_ctx *ctx = NULL;
-	_cleanup_nvme_transport_handle_ struct nvme_transport_handle *hdl = NULL;
+	struct nvme_dev *dev;
 	int err;
 
 	struct config {
@@ -443,7 +448,7 @@ static int vendor_log(int argc, char **argv, struct command *acmd, struct plugin
 		OPT_END()
 	};
 
-	err = parse_and_open(&ctx, &hdl, argc, argv, desc, opts);
+	err = parse_and_open(&dev, argc, argv, desc, opts);
 	if (err) {
 		fprintf(stderr, "%s: failed to parse arguments\n", __func__);
 		return -EINVAL;
@@ -455,24 +460,23 @@ static int vendor_log(int argc, char **argv, struct command *acmd, struct plugin
 		goto end;
 	}
 
-	err = nvme_get_vendor_log(hdl, cfg.namespace_id, cfg.log,
+	err = nvme_get_vendor_log(dev, cfg.namespace_id, cfg.log,
 				  cfg.output_file);
 	if (err)
 		fprintf(stderr, "%s: couldn't get vendor log 0x%x\n", __func__, cfg.log);
 end:
 	if (err > 0)
 		nvme_show_status(err);
-
+	dev_close(dev);
 	return err;
 }
 
-static int internal_log(int argc, char **argv, struct command *acmd, struct plugin *plugin)
+static int internal_log(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
 	char *desc = "Get internal status log and show it.";
 	const char *output_file = "(optional) binary output filename";
 	const char *prev_log = "(optional) use previous log. Otherwise uses current log.";
-	_cleanup_nvme_global_ctx_ struct nvme_global_ctx *ctx = NULL;
-	_cleanup_nvme_transport_handle_ struct nvme_transport_handle *hdl = NULL;
+	struct nvme_dev *dev;
 	int err;
 
 	struct config {
@@ -491,7 +495,7 @@ static int internal_log(int argc, char **argv, struct command *acmd, struct plug
 		OPT_END()
 	};
 
-	err = parse_and_open(&ctx, &hdl, argc, argv, desc, opts);
+	err = parse_and_open(&dev, argc, argv, desc, opts);
 	if (err) {
 		fprintf(stderr, "%s: failed to parse arguments\n", __func__);
 		return -EINVAL;
@@ -502,53 +506,67 @@ static int internal_log(int argc, char **argv, struct command *acmd, struct plug
 	else
 		printf("Getting current log\n");
 
-	err = nvme_get_internal_log_file(hdl, cfg.output_file,
+	err = nvme_get_internal_log_file(dev_fd(dev), cfg.output_file,
 					 !cfg.prev_log);
 	if (err < 0)
 		fprintf(stderr, "%s: couldn't get fw log\n", __func__);
 	if (err > 0)
 		nvme_show_status(err);
 
+	dev_close(dev);
 	return err;
 }
 
-static int clear_correctable_errors(int argc, char **argv, struct command *acmd,
-				    struct plugin *plugin)
+static int clear_correctable_errors(int argc, char **argv, struct command *cmd,
+				struct plugin *plugin)
 {
 	char *desc = "Clear PCIe correctable error count.";
-	_cleanup_nvme_global_ctx_ struct nvme_global_ctx *ctx = NULL;
-	_cleanup_nvme_transport_handle_ struct nvme_transport_handle *hdl = NULL;
 	const __u32 namespace_id = 0xFFFFFFFF;
 	const __u32 feature_id = 0xCA;
 	const __u32 value = 1; /* Bit0 - reset clear PCIe correctable count */
 	const __u32 cdw12 = 0;
 	const bool save = false;
-	__u64 result;
+	struct nvme_dev *dev;
+	__u32 result;
 	int err;
 
 	OPT_ARGS(opts) = {
 		OPT_END()
 	};
 
-	err = parse_and_open(&ctx, &hdl, argc, argv, desc, opts);
+	err = parse_and_open(&dev, argc, argv, desc, opts);
 	if (err) {
 		fprintf(stderr, "%s: failed to parse arguments\n", __func__);
 		return -EINVAL;
 	}
 
 	/* Check device supported */
-	err = nvme_get_sct_status(hdl, MASK_0 | MASK_1);
+	err = nvme_get_sct_status(dev_fd(dev), MASK_0 | MASK_1);
 	if (err)
 		goto end;
 
-	err = nvme_set_features(hdl, namespace_id, feature_id, save, value, cdw12,
-			0, 0, 0, NULL, 0, &result);
+	struct nvme_set_features_args args = {
+		.args_size	= sizeof(args),
+		.fd		= dev_fd(dev),
+		.fid		= feature_id,
+		.nsid		= namespace_id,
+		.cdw11		= value,
+		.cdw12		= cdw12,
+		.save		= save,
+		.uuidx		= 0,
+		.cdw15		= 0,
+		.data_len	= 0,
+		.data		= NULL,
+		.timeout	= NVME_DEFAULT_IOCTL_TIMEOUT,
+		.result		= &result,
+	};
+	err = nvme_set_features(&args);
 	if (err)
 		fprintf(stderr, "%s: couldn't clear PCIe correctable errors\n",
 			__func__);
 end:
 	if (err > 0)
 		nvme_show_status(err);
-
+	dev_close(dev);
 	return err;
 }

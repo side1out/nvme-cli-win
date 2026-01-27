@@ -13,7 +13,11 @@
 
 #include "common.h"
 #include "nvme.h"
-#include "libnvme.h"
+#ifdef WINDOWS_GCC
+#include "../subprojects/libnvme/src/libnvme.h"
+#else
+#include <libnvme.h>
+#endif
 #include "plugin.h"
 #include "nvme-print.h"
 
@@ -482,24 +486,24 @@ static void show_dapustor_smart_log(struct nvme_additional_smart_log *smart,
 }
 
 static int dapustor_additional_smart_log_data(
-		struct nvme_transport_handle *hdl,
+		int dev_fd,
 		struct nvme_additional_smart_log *smart_log,
 		struct nvme_extended_additional_smart_log *ext_smart_log,
 		bool *has_ext)
 {
 	int err;
 
-	err = nvme_get_log_simple(hdl, 0xca, smart_log, sizeof(*smart_log));
+	err = nvme_get_log_simple(dev_fd, 0xca, sizeof(*smart_log), smart_log);
 	if (err) {
 		nvme_show_status(err);
 		return err;
 	}
-	err = nvme_get_log_simple(hdl, 0xcb, ext_smart_log, sizeof(*ext_smart_log));
+	err = nvme_get_log_simple(dev_fd, 0xcb, sizeof(*ext_smart_log), ext_smart_log);
 	*has_ext = !err;
 	return 0;
 }
 
-static int dapustor_additional_smart_log(int argc, char **argv, struct command *acmd,
+static int dapustor_additional_smart_log(int argc, char **argv, struct command *cmd,
 					 struct plugin *plugin)
 {
 	const char *desc = "Get DapuStor vendor specific additional smart log, and show it.";
@@ -509,12 +513,11 @@ static int dapustor_additional_smart_log(int argc, char **argv, struct command *
 	const char *json = "Dump output in json format";
 #endif /* CONFIG_JSONC */
 
-	_cleanup_nvme_transport_handle_ struct nvme_transport_handle *hdl = NULL;
-	struct nvme_extended_additional_smart_log ext_smart_log;
-	_cleanup_nvme_global_ctx_ struct nvme_global_ctx *ctx = NULL;
 	struct nvme_additional_smart_log smart_log;
-	bool has_ext = false;
+	struct nvme_extended_additional_smart_log ext_smart_log;
+	struct nvme_dev *dev;
 	int err;
+	bool has_ext = false;
 
 	struct config {
 		uint32_t namespace_id;
@@ -533,28 +536,24 @@ static int dapustor_additional_smart_log(int argc, char **argv, struct command *
 		OPT_END()
 	};
 
-	err = parse_and_open(&ctx, &hdl, argc, argv, desc, opts);
+	err = parse_and_open(&dev, argc, argv, desc, opts);
 	if (err)
 		return err;
 
-	err = dapustor_additional_smart_log_data(hdl, &smart_log,
-						 &ext_smart_log, &has_ext);
+	err = dapustor_additional_smart_log_data(dev_fd(dev), &smart_log, &ext_smart_log, &has_ext);
 	if (!err) {
 		if (cfg.json)
 			show_dapustor_smart_log_jsn(&smart_log, &ext_smart_log,
-						    cfg.namespace_id,
-						    nvme_transport_handle_get_name(hdl),
-						    has_ext);
+						    cfg.namespace_id, dev->name, has_ext);
 		else if (!cfg.raw_binary)
 			show_dapustor_smart_log(&smart_log, &ext_smart_log,
-						cfg.namespace_id,
-						nvme_transport_handle_get_name(hdl), has_ext);
+						cfg.namespace_id, dev->name, has_ext);
 		else {
 			d_raw((unsigned char *)&smart_log, sizeof(smart_log));
 			if (has_ext)
-				d_raw((unsigned char *)&ext_smart_log,
-				      sizeof(ext_smart_log));
+				d_raw((unsigned char *)&ext_smart_log, sizeof(ext_smart_log));
 		}
 	}
+	dev_close(dev);
 	return err;
 }

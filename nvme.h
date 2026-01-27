@@ -16,15 +16,25 @@
 #ifndef _NVME_H
 #define _NVME_H
 
-#include <dirent.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <endian.h>
+#ifdef WINDOWS_GCC
+#include <winsock2.h>
+#include <windows.h>
+#include "windows/endian.h"
+#include "subprojects/libnvme/src/nvme/mi.h"
+#else
 #include <sys/time.h>
+#include <endian.h>
+#include <dirent.h>
+#endif
+
 #include <sys/stat.h>
 
+#ifndef WINDOWS_GCC
 #include <libnvme-mi.h>
+#endif
 
 #include "plugin.h"
 #include "util/json.h"
@@ -51,6 +61,30 @@ enum nvme_cli_topo_ranking {
 };
 
 #define SYS_NVME "/sys/class/nvme"
+
+enum nvme_dev_type {
+	NVME_DEV_DIRECT,
+	NVME_DEV_MI,
+};
+
+struct nvme_dev {
+	enum nvme_dev_type type;
+	union {
+		struct {
+			int fd;
+			struct stat stat;
+		} direct;
+		struct {
+			nvme_root_t root;
+			nvme_mi_ep_t ep;
+			nvme_mi_ctrl_t ctrl;
+		} mi;
+	};
+
+	const char *name;
+};
+
+#define dev_fd(d) __dev_fd(d, __func__, __LINE__)
 
 struct nvme_config {
 	char *output_format;
@@ -79,6 +113,27 @@ struct nvme_config {
 		OPT_END()                                                              \
 	}
 
+static inline int __dev_fd(struct nvme_dev *dev, const char *func, int line)
+{
+	if (dev->type != NVME_DEV_DIRECT) {
+		fprintf(stderr,
+			"warning: %s:%d not a direct transport!\n",
+			func, line);
+		return -1;
+	}
+	return dev->direct.fd;
+}
+
+static inline nvme_mi_ep_t dev_mi_ep(struct nvme_dev *dev)
+{
+	if (dev->type != NVME_DEV_MI) {
+		fprintf(stderr,
+			"warning: not a MI transport!\n");
+		return NULL;
+	}
+	return dev->mi.ep;
+}
+
 static inline bool nvme_is_multipath(nvme_subsystem_t s)
 {
 	nvme_ns_t n;
@@ -94,16 +149,16 @@ static inline bool nvme_is_multipath(nvme_subsystem_t s)
 void register_extension(struct plugin *plugin);
 
 /*
- * parse_and_open - parses arguments and opens the NVMe device, populating @ctx, @hdl
+ * parse_and_open - parses arguments and opens the NVMe device, populating @dev
  */
-int parse_and_open(struct nvme_global_ctx **ctx,
-		struct nvme_transport_handle **hdl, int argc, char **argv,
-		const char *desc, struct argconfig_commandline_options *clo);
+int parse_and_open(struct nvme_dev **dev, int argc, char **argv, const char *desc,
+	struct argconfig_commandline_options *clo);
 
-// TODO: unsure if we need a double ptr here
+void dev_close(struct nvme_dev *dev);
+
 static inline DEFINE_CLEANUP_FUNC(
-	cleanup_nvme_transport_handle, struct nvme_transport_handle *, nvme_close)
-#define _cleanup_nvme_transport_handle_ __cleanup__(cleanup_nvme_transport_handle)
+	cleanup_nvme_dev, struct nvme_dev *, dev_close)
+#define _cleanup_nvme_dev_ __cleanup__(cleanup_nvme_dev)
 
 extern const char *output_format;
 extern const char *timeout;
@@ -113,7 +168,7 @@ extern struct nvme_config nvme_cfg;
 
 int validate_output_format(const char *format, nvme_print_flags_t *flags);
 bool nvme_is_output_format_json(void);
-int __id_ctrl(int argc, char **argv, struct command *acmd,
+int __id_ctrl(int argc, char **argv, struct command *cmd,
 	struct plugin *plugin, void (*vs)(uint8_t *vs, struct json_object *root));
 
 const char *nvme_strerror(int errnum);
@@ -129,16 +184,4 @@ void d_raw(unsigned char *buf, unsigned len);
 
 int get_reg_size(int offset);
 bool nvme_is_ctrl_reg(int offset);
-
-static inline int nvme_get_nsid_log(struct nvme_transport_handle *hdl,
-				    __u32 nsid, bool rae,
-				    enum nvme_cmd_get_log_lid lid,
-				    void *log, __u32 len)
-{
-	struct nvme_passthru_cmd cmd;
-
-	nvme_init_get_log(&cmd, nsid, lid, NVME_CSI_NVM, log, len);
-
-	return nvme_get_log(hdl, &cmd, rae, NVME_LOG_PAGE_PDU_SIZE);
-}
 #endif /* _NVME_H */

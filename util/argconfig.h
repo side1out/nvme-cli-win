@@ -41,7 +41,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifdef WINDOWS_GCC
+#include "windows/types.h"
+#else
 #include <linux/types.h>
+#endif
 
 enum argconfig_types {
 	CFG_FLAG,

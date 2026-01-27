@@ -10,6 +10,10 @@
 #include <errno.h>
 #include "nvme-models.h"
 
+#ifdef WINDOWS_GCC
+#include "windows/compat.h"
+#endif
+
 static char *_fmt1 = "/sys/class/nvme/nvme%d/device/subsystem_vendor";
 static char *_fmt2 = "/sys/class/nvme/nvme%d/device/subsystem_device";
 static char *_fmt3 = "/sys/class/nvme/nvme%d/device/vendor";

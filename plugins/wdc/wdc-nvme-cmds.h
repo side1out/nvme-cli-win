@@ -106,7 +106,7 @@ int run_wdc_vs_device_waf(int argc, char **argv,
 		struct plugin *plugin);
 
 int run_wdc_set_latency_monitor_feature(int argc, char **argv,
-		struct command *command,
+		struct command *cmd,
 		struct plugin *plugin);
 
 int run_wdc_vs_temperature_stats(int argc, char **argv,
@@ -117,13 +117,12 @@ int run_wdc_cu_smart_log(int argc, char **argv,
 		struct command *command,
 		struct plugin *plugin);
 
-bool run_wdc_nvme_check_supported_log_page(struct nvme_global_ctx *ctx,
-		struct nvme_transport_handle *hdl,
+bool run_wdc_nvme_check_supported_log_page(nvme_root_t r,
+		struct nvme_dev *dev,
 		__u8 log_id,
 		__u8 uuid_index);
 
-__u32 run_wdc_get_fw_cust_id(struct nvme_global_ctx *ctx,
-		struct nvme_transport_handle *hdl);
+__u32 run_wdc_get_fw_cust_id(nvme_root_t r,
+		struct nvme_dev *dev);
 
-__u64 run_wdc_get_drive_capabilities(struct nvme_global_ctx *ctx,
-		struct nvme_transport_handle *hdl);
+__u64 run_wdc_get_drive_capabilities(nvme_root_t r, struct nvme_dev *dev);

@@ -7,6 +7,10 @@
 #include <time.h>
 #include <limits.h>
 
+#ifdef WINDOWS_GCC
+#include "../windows/compat.h"
+#endif
+
 #include <ccan/endian/endian.h>
 
 #include "types.h"

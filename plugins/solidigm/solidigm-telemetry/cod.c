@@ -6,7 +6,6 @@
  */
 #include "common.h"
 #include "cod.h"
-#include "header.h"
 
 const char *oemDataMapDesc[] = {
 	"Media Read Count", //Uid 0x00
@@ -171,27 +170,18 @@ void solidigm_telemetry_log_cod_parse(struct telemetry_log *tl)
 		case FLOAT:
 			json_object_add_value_float(cod, key, *(float *)val);
 			break;
-		case STRING: {
-			struct json_object *str_obj = NULL;
-
-			sldm_uint8_array_to_string(val, item.DataFieldSizeInBytes, &str_obj);
-			json_object_object_add(cod, key, str_obj);
+		case STRING:
+			json_object_object_add(cod, key,
+			    json_object_new_string_len((const char *)val, item.DataFieldSizeInBytes));
 			break;
-		}
-		case TWO_BYTE_ASCII: {
-			struct json_object *str_obj = NULL;
-
-			sldm_uint8_array_to_string(val, 2, &str_obj);
-			json_object_object_add(cod, key, str_obj);
+		case TWO_BYTE_ASCII:
+			json_object_object_add(cod, key,
+					       json_object_new_string_len((const char *)val, 2));
 			break;
-		}
-		case FOUR_BYTE_ASCII: {
-			struct json_object *str_obj = NULL;
-
-			sldm_uint8_array_to_string(val, 4, &str_obj);
-			json_object_object_add(cod, key, str_obj);
+		case FOUR_BYTE_ASCII:
+			json_object_object_add(cod, key,
+				json_object_new_string_len((const char *)val, 4));
 			break;
-		}
 		default:
 			SOLIDIGM_LOG_WARNING("Warning: Unknown COD field type (%d)", item.DataFieldMapUid);
 			break;

@@ -16,7 +16,11 @@
 #include "nvme.h"
 #include "libnvme.h"
 #include "plugin.h"
+#ifdef WINDOWS_GCC
+#include <windows/types.h>
+#else
 #include "linux/types.h"
+#endif
 #include "nvme-print.h"
 #include "solidigm-garbage-collection.h"
 #include "solidigm-util.h"
@@ -65,13 +69,11 @@ static void vu_gc_log_show(struct garbage_control_collection_log *payload, const
 	}
 }
 
-int solidigm_get_garbage_collection_log(int argc, char **argv, struct command *acmd, struct plugin *plugin)
+int solidigm_get_garbage_collection_log(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
 	const char *desc = "Get and parse Solidigm vendor specific garbage collection event log.";
-	_cleanup_nvme_global_ctx_ struct nvme_global_ctx *ctx = NULL;
-	_cleanup_nvme_transport_handle_ struct nvme_transport_handle *hdl = NULL;
-	struct nvme_passthru_cmd cmd;
 	nvme_print_flags_t flags;
+	struct nvme_dev *dev;
 	int err;
 	__u8 uuid_index;
 
@@ -88,37 +90,53 @@ int solidigm_get_garbage_collection_log(int argc, char **argv, struct command *a
 		OPT_END()
 	};
 
-	err = parse_and_open(&ctx, &hdl, argc, argv, desc, opts);
+	err = parse_and_open(&dev, argc, argv, desc, opts);
 	if (err)
 		return err;
 
 	err = validate_output_format(cfg.output_format, &flags);
 	if (err) {
 		fprintf(stderr, "Invalid output format '%s'\n", cfg.output_format);
+		dev_close(dev);
 		return -EINVAL;
 	}
 
-	sldgm_get_uuid_index(hdl, &uuid_index);
+	sldgm_get_uuid_index(dev, &uuid_index);
 
 	struct garbage_control_collection_log gc_log;
 	const int solidigm_vu_gc_log_id = 0xfd;
-	nvme_init_get_log(&cmd, NVME_NSID_ALL,
-			  solidigm_vu_gc_log_id, NVME_CSI_NVM,
-			  &gc_log, sizeof(gc_log));
-	cmd.cdw14 |= NVME_FIELD_ENCODE(uuid_index,
-				       NVME_LOG_CDW14_UUID_SHIFT,
-				       NVME_LOG_CDW14_UUID_MASK);
-	err = nvme_get_log(hdl, &cmd, false, NVME_LOG_PAGE_PDU_SIZE);
+	struct nvme_get_log_args args = {
+		.lpo = 0,
+		.result = NULL,
+		.log = &gc_log,
+		.args_size = sizeof(args),
+		.fd = dev_fd(dev),
+		.timeout = NVME_DEFAULT_IOCTL_TIMEOUT,
+		.lid = solidigm_vu_gc_log_id,
+		.len = sizeof(gc_log),
+		.nsid = NVME_NSID_ALL,
+		.csi = NVME_CSI_NVM,
+		.lsi = NVME_LOG_LSI_NONE,
+		.lsp = NVME_LOG_LSP_NONE,
+		.uuidx = uuid_index,
+		.rae = false,
+		.ot = false,
+	};
+
+	err =  nvme_get_log(&args);
 	if (!err) {
 		if (flags & BINARY)
 			d_raw((unsigned char *)&gc_log, sizeof(gc_log));
 		else if (flags & JSON)
-			vu_gc_log_show_json(&gc_log, nvme_transport_handle_get_name(hdl));
+			vu_gc_log_show_json(&gc_log, dev->name);
 		else
-			vu_gc_log_show(&gc_log, nvme_transport_handle_get_name(hdl), uuid_index);
+			vu_gc_log_show(&gc_log, dev->name, uuid_index);
 	} else if (err > 0) {
 		nvme_show_status(err);
 	}
 
+	/* Redundant close() to make static code analysis happy */
+	close(dev->direct.fd);
+	dev_close(dev);
 	return err;
 }

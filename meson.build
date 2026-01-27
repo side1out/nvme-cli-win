@@ -40,7 +40,7 @@ else
 
     if host_machine.system() == 'windows'
         conf.set('GIT_VERSION', '"@0@"'.format(version_tag))
-    else
+    elif
         r = run_command('scripts/meson-vcs-tag.sh',
                         meson.current_source_dir(),
                         meson.project_version(),
@@ -95,16 +95,12 @@ else
     conf.set('CONFIG_JSONC', json_c_dep.found(), description: 'Is json-c available?')
 
     # Force the bundled libnvme subproject on Windows - disable json-c in subproject since it's Linux-only
-    libnvme = subproject('libnvme', default_options: ['json-c=disabled', 'liburing=disabled', 'openssl=disabled', 'keyutils=disabled', 'version-tag=1.16.1'])
+    libnvme = subproject('libnvme', default_options: ['json-c=disabled', 'liburing=disabled', 'openssl=disabled', 'keyutils=disabled'])
     libnvme_dep = libnvme.get_variable('libnvme_dep')
     libnvme_mi_dep = libnvme.get_variable('libnvme_mi_dep')
 
     message('Done with windows pre')
 endif
-
-# Documentation options
-want_docs = get_option('docs')
-want_docs_build = get_option('docs-build')
 
 # Set the nvme-cli version
 conf.set('NVME_VERSION', '"' + meson.project_version() + '"')
@@ -235,19 +231,9 @@ else
   conf.set('fallthrough', 'do {} while (0) /* fallthrough */')
 endif
 
-config_h = configure_file(
+configure_file(
     output: 'config.h',
     configuration: conf
-)
-
-# Create config dependency for unit tests
-config_dep = declare_dependency(
-    include_directories: include_directories('.'),
-)
-
-config_dep = declare_dependency(
-    sources: config_h,
-    include_directories: '.',
 )
 
 ################################################################################
@@ -345,6 +331,7 @@ sources = [
   'nvme-print-stdout.c',
   'nvme-print-binary.c',
   'nvme-rpmb.c',
+  'nvme-wrap.c',
   'plugin.c',
   'libnvme-wrap.c',
   'logging.c',
@@ -370,7 +357,7 @@ mode = ['rw-r--r--', 0, 0]
 install_headers('windows/types.h', install_mode: mode)
 install_headers('windows/compat.h', install_mode: mode)
 
-incdir = include_directories(['ccan', 'subprojects/libnvme/src', 'subprojects/libnvme/src/nvme'])
+incdir = include_directories(['ccan', 'subprojects\libnvme\src', 'subprojects\libnvme\src\\nvme'])
 sources = [
 #  'nbft.c',
 #  'fabrics.c',
@@ -381,6 +368,7 @@ sources = [
     'nvme-print-stdout.c',
     'nvme-print-binary.c',
 #    'nvme-rpmb.c',
+    'nvme-wrap.c',
     'plugin.c',
     'libnvme-wrap.c',
     'logging.c',

@@ -11,7 +11,7 @@
 struct command;
 struct plugin;
 
-int solidigm_get_log_page_directory_log(int argc, char **argv, struct command *acmd,
+int solidigm_get_log_page_directory_log(int argc, char **argv, struct command *cmd,
 					struct plugin *plugin);
 
 #endif

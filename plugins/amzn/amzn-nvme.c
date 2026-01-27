@@ -8,7 +8,11 @@
 
 #include "common.h"
 #include "nvme.h"
-#include "libnvme.h"
+#ifdef WINDOWS_GCC
+#include "../subprojects/libnvme/src/libnvme.h"
+#else
+#include <libnvme.h>
+#endif
 #include "plugin.h"
 #include "nvme-print.h"
 
@@ -128,9 +132,9 @@ static void amzn_id_ctrl(__u8 *vs, struct json_object *root)
 	printf("bdev      : %s\n", bdev);
 }
 
-static int id_ctrl(int argc, char **argv, struct command *acmd, struct plugin *plugin)
+static int id_ctrl(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
-	return __id_ctrl(argc, argv, acmd, plugin, amzn_id_ctrl);
+	return __id_ctrl(argc, argv, cmd, plugin, amzn_id_ctrl);
 }
 
 /* this function converts the size (in uint32_t) into human readable string
@@ -462,20 +466,16 @@ static void amzn_print_json_stats(struct amzn_latency_log_page *log, bool detail
 #define amzn_print_json_stats(log, detail)
 #endif /* CONFIG_JSONC */
 
-static int get_stats(int argc, char **argv, struct command *acmd,
+static int get_stats(int argc, char **argv, struct command *cmd,
 		     struct plugin *plugin)
 {
 	const char *desc = "display command latency statistics";
-	_cleanup_nvme_transport_handle_ struct nvme_transport_handle *hdl = NULL;
-	_cleanup_nvme_global_ctx_ struct nvme_global_ctx *ctx = NULL;
+	struct nvme_dev *dev;
 	struct amzn_latency_log_page log = { 0 };
+	int rc;
 	nvme_print_flags_t flags = 0; // Initialize flags to 0
-	struct nvme_passthru_cmd cmd;
 	struct nvme_id_ctrl ctrl;
 	bool detail = false;
-	size_t len;
-	__u32 nsid = 1;
-	int rc;
 
 	struct config {
 		char *output_format;
@@ -491,36 +491,51 @@ static int get_stats(int argc, char **argv, struct command *acmd,
 		OPT_FLAG("details", 'd', &detail, "Detail IO histogram of each block size ranges"),
 		OPT_END()};
 
-	rc = parse_and_open(&ctx, &hdl, argc, argv, desc, opts);
+	rc = parse_and_open(&dev, argc, argv, desc, opts);
 	if (rc)
 		return rc;
 
-	if (nvme_identify_ctrl(hdl, &ctrl)) {
+	if (nvme_identify_ctrl(dev_fd(dev), &ctrl)) {
 		fprintf(stderr, "Failed to get identify controller\n");
 		rc = -errno;
 		goto done;
 	}
 
+	struct nvme_get_log_args args = {
+		.args_size = sizeof(args),
+		.fd = dev_fd(dev),
+		.lid = AMZN_NVME_STATS_LOGPAGE_ID,
+		.nsid = 1,
+		.lpo = 0,
+		.lsp = NVME_LOG_LSP_NONE,
+		.lsi = 0,
+		.rae = false,
+		.uuidx = 0,
+		.csi = NVME_CSI_NVM,
+		.ot = false,
+		.log = (void *) &log,
+		.timeout = NVME_DEFAULT_IOCTL_TIMEOUT,
+		.result = NULL,
+	};
+
 	if (!strncmp((char *)ctrl.mn, AMZN_NVME_LOCAL_STORAGE_PREFIX,
 		     strlen(AMZN_NVME_LOCAL_STORAGE_PREFIX))) {
-		if (nvme_get_nsid(hdl, &nsid) < 0) {
+		if (nvme_get_nsid(dev_fd(dev), &args.nsid) < 0) {
 			struct nvme_id_ctrl test_ctrl;
 
-			if (nvme_identify_ctrl(hdl, &test_ctrl) == 0) {
-				nsid = NVME_NSID_ALL;
+			if (nvme_identify_ctrl(dev_fd(dev), &test_ctrl) == 0) {
+				args.nsid = NVME_NSID_ALL;
 			} else {
 				rc = -errno;
 				goto done;
 			}
 		}
-		len = sizeof(log);
+		args.len = sizeof(log);
 	} else {
-		len = sizeof(log.base);
+		args.len = sizeof(log.base);
 	}
 
-	nvme_init_get_log(&cmd, nsid, AMZN_NVME_STATS_LOGPAGE_ID, NVME_CSI_NVM,
-			  &log, len);
-	rc = nvme_get_log(hdl, &cmd, false, NVME_LOG_PAGE_PDU_SIZE);
+	rc = nvme_get_log(&args);
 	if (rc != 0) {
 		fprintf(stderr, "[ERROR] %s: Failed to get log page, rc = %d\n",
 			__func__, rc);
@@ -546,5 +561,6 @@ static int get_stats(int argc, char **argv, struct command *acmd,
 		amzn_print_normal_stats(&log, detail);
 
 done:
+	dev_close(dev);
 	return rc;
 }

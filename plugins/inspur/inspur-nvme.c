@@ -204,23 +204,23 @@ void show_r1_media_err_log(r1_cli_vendor_log_t *vendorlog)
 	}
 }
 
-static int nvme_get_vendor_log(int argc, char **argv, struct command *acmd, struct plugin *plugin)
+static int nvme_get_vendor_log(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
-	char *desc = "Get the Inspur vendor log";
-	_cleanup_nvme_global_ctx_ struct nvme_global_ctx *ctx = NULL;
-	_cleanup_nvme_transport_handle_ struct nvme_transport_handle *hdl = NULL;
 	__u8 local_mem[BYTE_OF_4K];
+	char *desc = "Get the Inspur vendor log";
+	struct nvme_dev *dev;
 	int err;
 
 	OPT_ARGS(opts) = { OPT_END() };
 
-	err = parse_and_open(&ctx, &hdl, argc, argv, desc, opts);
+	err = parse_and_open(&dev, argc, argv, desc, opts);
 	if (err)
 		return err;
 
 	memset(local_mem, 0, BYTE_OF_4K);
-	err = nvme_get_log_simple(hdl, (enum nvme_cmd_get_log_lid)VENDOR_SMART_LOG_PAGE,
-				  local_mem, sizeof(r1_cli_vendor_log_t));
+	err = nvme_get_log_simple(dev_fd(dev),
+				  (enum nvme_cmd_get_log_lid)VENDOR_SMART_LOG_PAGE,
+				  sizeof(r1_cli_vendor_log_t), local_mem);
 	if (!err) {
 		show_r1_vendor_log((r1_cli_vendor_log_t *)local_mem);
 		show_r1_media_err_log((r1_cli_vendor_log_t *)local_mem);
@@ -228,5 +228,6 @@ static int nvme_get_vendor_log(int argc, char **argv, struct command *acmd, stru
 		nvme_show_status(err);
 	}
 
+	dev_close(dev);
 	return err;
 }

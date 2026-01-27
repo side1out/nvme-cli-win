@@ -7,16 +7,17 @@
 
 #include <errno.h>
 #include "nvme-print.h"
+#include "nvme-wrap.h"
 #include "common.h"
 
-int sldgm_get_drive_info(int argc, char **argv, struct command *acmd, struct plugin *plugin)
+int sldgm_get_drive_info(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
+	_cleanup_nvme_dev_ struct nvme_dev *dev = NULL;
 	const char *desc = "Get drive HW information";
 	const char *FTL_unit_size_str = "FTL_unit_size";
 	char *output_format = "normal";
-	_cleanup_nvme_global_ctx_ struct nvme_global_ctx *ctx = NULL;
-	_cleanup_nvme_transport_handle_ struct nvme_transport_handle *hdl = NULL;
 	nvme_print_flags_t flags;
+	nvme_root_t r;
 	nvme_ctrl_t c;
 	nvme_ns_t n;
 	struct nvme_id_ns ns = { 0 };
@@ -30,7 +31,7 @@ int sldgm_get_drive_info(int argc, char **argv, struct command *acmd, struct plu
 		OPT_END()
 	};
 
-	err = parse_and_open(&ctx, &hdl, argc, argv, desc, opts);
+	err = parse_and_open(&dev, argc, argv, desc, opts);
 	if (err)
 		return err;
 
@@ -40,20 +41,12 @@ int sldgm_get_drive_info(int argc, char **argv, struct command *acmd, struct plu
 		return err;
 	}
 
-	err = nvme_scan_topology(ctx, NULL, NULL);
-	if (err)
-		return err;
-
-	err = nvme_scan_ctrl(ctx, nvme_transport_handle_get_name(hdl), &c);
-	if (!err)
-		n = nvme_ctrl_first_ns(c);
-	else {
-		err = nvme_scan_namespace(ctx,
-			nvme_transport_handle_get_name(hdl), &n);
-		if (err) {
-			nvme_show_error("solidigm-vs-drive-info: drive missing namespace");
-			return err;
-		}
+	r = nvme_scan(NULL);
+	c = nvme_scan_ctrl(r, dev->name);
+	n = c ? nvme_ctrl_first_ns(c) : nvme_scan_namespace(dev->name);
+	if (!n) {
+		nvme_show_error("solidigm-vs-drive-info: drive missing namespace");
+		return -EINVAL;
 	}
 
 	err = nvme_ns_identify(n, &ns);

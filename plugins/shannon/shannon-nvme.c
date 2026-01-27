@@ -10,7 +10,9 @@
 #include "nvme.h"
 #include "libnvme.h"
 #include "plugin.h"
+#ifndef WINDOWS_GCC
 #include "linux/types.h"
+#endif
 #include "nvme-print.h"
 
 #define CREATE_CMD
@@ -60,8 +62,8 @@ struct nvme_shannon_smart_log {
 	__u8  vend_spec_resv;
 };
 
-static void show_shannon_smart_log(struct nvme_shannon_smart_log *smart,
-				   unsigned int nsid, const char *devname)
+static void show_shannon_smart_log(struct nvme_shannon_smart_log *smart, unsigned int nsid,
+				   const char *devname)
 {
 	printf("Additional Smart Log for NVME device:%s namespace-id:%x\n",
 	       devname, nsid);
@@ -113,15 +115,14 @@ static void show_shannon_smart_log(struct nvme_shannon_smart_log *smart,
 	       int48_to_long(smart->items[SRAM_ERROR_CNT].item_val));
 }
 
-static int get_additional_smart_log(int argc, char **argv, struct command *acmd, struct plugin *plugin)
+static int get_additional_smart_log(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
 	struct nvme_shannon_smart_log smart_log;
 	char *desc =
 	    "Get Shannon vendor specific additional smart log (optionally, for the specified namespace), and show it.";
 	const char *namespace = "(optional) desired namespace";
 	const char *raw = "dump output in binary format";
-	_cleanup_nvme_global_ctx_ struct nvme_global_ctx *ctx = NULL;
-	_cleanup_nvme_transport_handle_ struct nvme_transport_handle *hdl = NULL;
+	struct nvme_dev *dev;
 	struct config {
 		__u32 namespace_id;
 		bool  raw_binary;
@@ -138,26 +139,24 @@ static int get_additional_smart_log(int argc, char **argv, struct command *acmd,
 		OPT_END()
 	};
 
-	err = parse_and_open(&ctx, &hdl, argc, argv, desc, opts);
+	err = parse_and_open(&dev, argc, argv, desc, opts);
 	if (err)
 		return err;
-	err = nvme_get_nsid_log(hdl, cfg.namespace_id, false, 0xca,
-				&smart_log, sizeof(smart_log));
+	err = nvme_get_nsid_log(dev_fd(dev), false, 0xca, cfg.namespace_id,
+				sizeof(smart_log), &smart_log);
 	if (!err) {
 		if (!cfg.raw_binary)
-			show_shannon_smart_log(
-				&smart_log, cfg.namespace_id,
-				nvme_transport_handle_get_name(hdl));
+			show_shannon_smart_log(&smart_log, cfg.namespace_id, dev->name);
 		else
 			d_raw((unsigned char *)&smart_log, sizeof(smart_log));
 	} else if (err > 0) {
 		nvme_show_status(err);
 	}
-
+	dev_close(dev);
 	return err;
 }
 
-static int get_additional_feature(int argc, char **argv, struct command *acmd, struct plugin *plugin)
+static int get_additional_feature(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
 	const char *desc = "Read operating parameters of the\n"
 		"specified controller. Operating parameters are grouped\n"
@@ -177,10 +176,9 @@ static int get_additional_feature(int argc, char **argv, struct command *acmd, s
 	const char *data_len = "buffer len (if) data is returned";
 	const char *cdw11 = "dword 11 for interrupt vector config";
 	const char *human_readable = "show infos in readable format";
-	_cleanup_nvme_global_ctx_ struct nvme_global_ctx *ctx = NULL;
-	_cleanup_nvme_transport_handle_ struct nvme_transport_handle *hdl = NULL;
+	struct nvme_dev *dev;
 	void *buf = NULL;
-	__u64 result;
+	__u32 result;
 	int err;
 
 	struct config {
@@ -212,33 +210,49 @@ static int get_additional_feature(int argc, char **argv, struct command *acmd, s
 		OPT_END()
 	};
 
-	err = parse_and_open(&ctx, &hdl, argc, argv, desc, opts);
+	err = parse_and_open(&dev, argc, argv, desc, opts);
 	if (err)
 		return err;
 
 	if (cfg.sel > 7) {
 		fprintf(stderr, "invalid 'select' param:%d\n", cfg.sel);
+		dev_close(dev);
 		return -EINVAL;
 	}
 	if (!cfg.feature_id) {
 		fprintf(stderr, "feature-id required param\n");
+		dev_close(dev);
 		return -EINVAL;
 	}
 	if (cfg.data_len) {
-		if (posix_memalign(&buf, getpagesize(), cfg.data_len))
-			return -ENOMEM;
+		if (posix_memalign(&buf, getpagesize(), cfg.data_len)) {
+			dev_close(dev);
+			exit(ENOMEM);
+		}
 		memset(buf, 0, cfg.data_len);
 	}
 
-	err = nvme_get_features(hdl, cfg.namespace_id, cfg.feature_id, cfg.sel,
-			cfg.cdw11, 0, buf, cfg.data_len, &result);
+	struct nvme_get_features_args args = {
+		.args_size	= sizeof(args),
+		.fd		= dev_fd(dev),
+		.fid		= cfg.feature_id,
+		.nsid		= cfg.namespace_id,
+		.sel		= cfg.sel,
+		.cdw11		= cfg.cdw11,
+		.uuidx		= 0,
+		.data_len	= cfg.data_len,
+		.data		= buf,
+		.timeout	= NVME_DEFAULT_IOCTL_TIMEOUT,
+		.result		= &result,
+	};
+	err = nvme_get_features(&args);
 	if (err > 0)
 		nvme_show_status(err);
 	free(buf);
 	return err;
 }
 
-static int set_additional_feature(int argc, char **argv, struct command *acmd, struct plugin *plugin)
+static int set_additional_feature(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
 	const char *desc = "Modify the saveable or changeable\n"
 		"current operating parameters of the controller. Operating\n"
@@ -257,11 +271,10 @@ static int set_additional_feature(int argc, char **argv, struct command *acmd, s
 	const char *data = "optional file for feature data (default stdin)";
 	const char *value = "new value of feature (required)";
 	const char *save = "specifies that the controller shall save the attribute";
-	_cleanup_nvme_global_ctx_ struct nvme_global_ctx *ctx = NULL;
-	_cleanup_nvme_transport_handle_ struct nvme_transport_handle *hdl = NULL;
-	_cleanup_free_ void *buf = NULL;
 	int ffd = STDIN_FILENO;
-	__u64 result;
+	struct nvme_dev *dev;
+	void *buf = NULL;
+	__u32 result;
 	int err;
 
 	struct config {
@@ -292,18 +305,20 @@ static int set_additional_feature(int argc, char **argv, struct command *acmd, s
 		OPT_END()
 	};
 
-	err = parse_and_open(&ctx, &hdl, argc, argv, desc, opts);
+	err = parse_and_open(&dev, argc, argv, desc, opts);
 	if (err)
 		return err;
 
 	if (!cfg.feature_id) {
 		fprintf(stderr, "feature-id required param\n");
+		dev_close(dev);
 		return -EINVAL;
 	}
 
 	if (cfg.data_len) {
 		if (posix_memalign(&buf, getpagesize(), cfg.data_len)) {
 			fprintf(stderr, "can not allocate feature payload\n");
+			dev_close(dev);
 			return -ENOMEM;
 		}
 		memset(buf, 0, cfg.data_len);
@@ -314,21 +329,37 @@ static int set_additional_feature(int argc, char **argv, struct command *acmd, s
 			ffd = open(cfg.file, O_RDONLY);
 			if (ffd <= 0) {
 				fprintf(stderr, "no firmware file provided\n");
-				return -EINVAL;
+				err = EINVAL;
+				goto free;
 			}
 		}
 		err = read(ffd, (void *)buf, cfg.data_len);
 		if (err < 0) {
 			fprintf(stderr, "failed to read data buffer from input file\n");
-			return -EINVAL;
+			err = EINVAL;
+			goto free;
 		}
 	}
 
-	err = nvme_set_features(hdl, cfg.namespace_id, cfg.feature_id, cfg.save,
-			cfg.value, 0, 0, 0, 0, buf, cfg.data_len, &result);
+	struct nvme_set_features_args args = {
+		.args_size	= sizeof(args),
+		.fd		= dev_fd(dev),
+		.fid		= cfg.feature_id,
+		.nsid		= cfg.namespace_id,
+		.cdw11		= cfg.value,
+		.cdw12		= 0,
+		.save		= cfg.save,
+		.uuidx		= 0,
+		.cdw15		= 0,
+		.data_len	= cfg.data_len,
+		.data		= buf,
+		.timeout	= NVME_DEFAULT_IOCTL_TIMEOUT,
+		.result		= &result,
+	};
+	err = nvme_set_features(&args);
 	if (err < 0) {
 		perror("set-feature");
-		return -errno;
+		goto free;
 	}
 	if (!err) {
 		if (buf)
@@ -336,11 +367,15 @@ static int set_additional_feature(int argc, char **argv, struct command *acmd, s
 	} else if (err > 0)
 		nvme_show_status(err);
 
+free:
+	free(buf);
 	return err;
 }
 
-static int shannon_id_ctrl(int argc, char **argv, struct command *acmd, struct plugin *plugin)
+static int shannon_id_ctrl(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
-	return __id_ctrl(argc, argv, acmd, plugin, NULL);
+	return __id_ctrl(argc, argv, cmd, plugin, NULL);
 }
+
+
 

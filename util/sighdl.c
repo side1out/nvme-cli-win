@@ -3,6 +3,10 @@
 #include <errno.h>
 #include <stddef.h>
 
+#ifdef WINDOWS_GCC
+#include "../windows/compat.h"
+#endif
+
 #include "sighdl.h"
 
 bool nvme_sigint_received;

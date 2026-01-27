@@ -30,28 +30,26 @@ static const __u8 SNDK_UUID[NVME_UUID_LEN] = {
 	0xad, 0xd8, 0x3c, 0x29, 0xd1, 0x23, 0x7c, 0x70
 };
 
-int sndk_get_pci_ids(struct nvme_global_ctx *ctx, struct nvme_transport_handle *hdl,
+int sndk_get_pci_ids(nvme_root_t r, struct nvme_dev *dev,
 			   uint32_t *device_id, uint32_t *vendor_id)
 {
 	char vid[256], did[256], id[32];
 	nvme_ctrl_t c = NULL;
 	nvme_ns_t n = NULL;
-	const char *name;
 	int fd, ret;
 
-	name = nvme_transport_handle_get_name(hdl);
-	ret = nvme_scan_ctrl(ctx, name, &c);
-	if (!ret) {
+	c = nvme_scan_ctrl(r, dev->name);
+	if (c) {
 		snprintf(vid, sizeof(vid), "%s/device/vendor",
 			nvme_ctrl_get_sysfs_dir(c));
 		snprintf(did, sizeof(did), "%s/device/device",
 			nvme_ctrl_get_sysfs_dir(c));
 		nvme_free_ctrl(c);
 	} else {
-		ret = nvme_scan_namespace(ctx, name, &n);
-		if (!ret) {
-			fprintf(stderr, "Unable to find %s\n", name);
-			return ret;
+		n = nvme_scan_namespace(dev->name);
+		if (!n) {
+			fprintf(stderr, "Unable to find %s\n", dev->name);
+			return -1;
 		}
 
 		snprintf(vid, sizeof(vid), "%s/device/device/vendor",
@@ -102,13 +100,13 @@ int sndk_get_pci_ids(struct nvme_global_ctx *ctx, struct nvme_transport_handle *
 	return 0;
 }
 
-int sndk_get_vendor_id(struct nvme_transport_handle *hdl, uint32_t *vendor_id)
+int sndk_get_vendor_id(struct nvme_dev *dev, uint32_t *vendor_id)
 {
-	struct nvme_id_ctrl ctrl;
 	int ret;
+	struct nvme_id_ctrl ctrl;
 
 	memset(&ctrl, 0, sizeof(struct nvme_id_ctrl));
-	ret = nvme_identify_ctrl(hdl, &ctrl);
+	ret = nvme_identify_ctrl(dev_fd(dev), &ctrl);
 	if (ret) {
 		fprintf(stderr, "ERROR: SNDK: nvme_identify_ctrl() failed 0x%x\n", ret);
 		return -1;
@@ -119,17 +117,16 @@ int sndk_get_vendor_id(struct nvme_transport_handle *hdl, uint32_t *vendor_id)
 	return ret;
 }
 
-bool sndk_check_device(struct nvme_global_ctx *ctx,
-		       struct nvme_transport_handle *hdl)
+bool sndk_check_device(nvme_root_t r, struct nvme_dev *dev)
 {
-	uint32_t read_device_id = -1, read_vendor_id = -1;
-	bool supported;
 	int ret;
+	bool supported;
+	uint32_t read_device_id = -1, read_vendor_id = -1;
 
-	ret = sndk_get_pci_ids(ctx, hdl, &read_device_id, &read_vendor_id);
+	ret = sndk_get_pci_ids(r, dev, &read_device_id, &read_vendor_id);
 	if (ret < 0) {
 		/* Use the identify nvme command to get vendor id due to NVMeOF device. */
-		if (sndk_get_vendor_id(hdl, &read_vendor_id) < 0)
+		if (sndk_get_vendor_id(dev, &read_vendor_id) < 0)
 			return false;
 	}
 
@@ -306,7 +303,7 @@ bool sndk_nvme_parse_dev_status_log_str(void *log_data,
 }
 
 
-bool sndk_get_dev_mgment_data(struct nvme_global_ctx *ctx, struct nvme_transport_handle *hdl,
+bool sndk_get_dev_mgment_data(nvme_root_t r, struct nvme_dev *dev,
 				void **data)
 {
 	bool found = false;
@@ -322,10 +319,10 @@ bool sndk_get_dev_mgment_data(struct nvme_global_ctx *ctx, struct nvme_transport
 	 * initialized to 0 so the code can continue on without issue for
 	 * both cases: sndk_get_pci_ids successful or failed.
 	 */
-	sndk_get_pci_ids(ctx, hdl, &device_id, &vendor_id);
+	sndk_get_pci_ids(r, dev, &device_id, &vendor_id);
 
 	memset(&uuid_list, 0, sizeof(struct nvme_id_uuid_list));
-	if (!nvme_get_uuid_list(hdl, &uuid_list)) {
+	if (!nvme_get_uuid_list(dev_fd(dev), &uuid_list)) {
 		/* check for the Sandisk UUID first  */
 		uuid_index = nvme_uuid_find(&uuid_list, SNDK_UUID);
 
@@ -337,7 +334,7 @@ bool sndk_get_dev_mgment_data(struct nvme_global_ctx *ctx, struct nvme_transport
 		}
 
 		if (uuid_index >= 0)
-			found = sndk_get_dev_mgmt_log_page_data(hdl, data, uuid_index);
+			found = sndk_get_dev_mgmt_log_page_data(dev, data, uuid_index);
 		else {
 			fprintf(stderr, "%s: UUID lists are supported but a matching ",
 				__func__);
@@ -348,7 +345,7 @@ bool sndk_get_dev_mgment_data(struct nvme_global_ctx *ctx, struct nvme_transport
 		fprintf(stderr, "INFO: SNDK: %s:  UUID Lists not supported\n",
 				__func__);
 		uuid_index = 0;
-		found = sndk_get_dev_mgmt_log_page_data(hdl, data, uuid_index);
+		found = sndk_get_dev_mgmt_log_page_data(dev, data, uuid_index);
 	}
 
 	return found;
@@ -426,16 +423,15 @@ bool sndk_validate_dev_mng_log(void *data)
 	return valid_log;
 }
 
-bool sndk_get_dev_mgmt_log_page_data(struct nvme_transport_handle *hdl,
+bool sndk_get_dev_mgmt_log_page_data(struct nvme_dev *dev,
 		void **log_data,
 		__u8 uuid_ix)
 {
-	struct sndk_c2_log_page_header *hdr_ptr;
-	struct nvme_passthru_cmd cmd;
-	bool valid = false;
-	__u32 length = 0;
 	void *data;
+	struct sndk_c2_log_page_header *hdr_ptr;
+	__u32 length = 0;
 	int ret = 0;
+	bool valid = false;
 
 	data = (__u8 *)malloc(sizeof(__u8) * SNDK_DEV_MGMNT_LOG_PAGE_LEN);
 	if (!data) {
@@ -446,13 +442,24 @@ bool sndk_get_dev_mgmt_log_page_data(struct nvme_transport_handle *hdl,
 	memset(data, 0, sizeof(__u8) * SNDK_DEV_MGMNT_LOG_PAGE_LEN);
 
 	/* get the log page length */
-	nvme_init_get_log(&cmd, NVME_NSID_ALL,
-		SNDK_NVME_GET_DEV_MGMNT_LOG_PAGE_ID, NVME_CSI_NVM, data,
-		SNDK_DEV_MGMNT_LOG_PAGE_LEN);
-	cmd.cdw14 |= NVME_FIELD_ENCODE(uuid_ix,
-				       NVME_LOG_CDW14_UUID_SHIFT,
-				       NVME_LOG_CDW14_UUID_MASK);
-	ret = nvme_get_log(hdl, &cmd, false, NVME_LOG_PAGE_PDU_SIZE);
+	struct nvme_get_log_args args_len = {
+		.args_size	= sizeof(args_len),
+		.fd		= dev_fd(dev),
+		.lid		= SNDK_NVME_GET_DEV_MGMNT_LOG_PAGE_ID,
+		.nsid		= 0xFFFFFFFF,
+		.lpo		= 0,
+		.lsp		= NVME_LOG_LSP_NONE,
+		.lsi		= 0,
+		.rae		= false,
+		.uuidx		= uuid_ix,
+		.csi		= NVME_CSI_NVM,
+		.ot		= false,
+		.len		= SNDK_DEV_MGMNT_LOG_PAGE_LEN,
+		.log		= data,
+		.timeout	= NVME_DEFAULT_IOCTL_TIMEOUT,
+		.result		= NULL,
+	};
+	ret = nvme_get_log(&args_len);
 	if (ret) {
 		fprintf(stderr,
 			"ERROR: SNDK: Unable to get 0x%x Log Page with uuid %d, ret = 0x%x\n",
@@ -473,13 +480,25 @@ bool sndk_get_dev_mgmt_log_page_data(struct nvme_transport_handle *hdl,
 		}
 
 		/* get the log page data with the increased length */
-		nvme_init_get_log(&cmd, NVME_NSID_ALL,
-			SNDK_NVME_GET_DEV_MGMNT_LOG_PAGE_ID, NVME_CSI_NVM, data,
-			length);
-		cmd.cdw14 |= NVME_FIELD_ENCODE(uuid_ix,
-				NVME_LOG_CDW14_UUID_SHIFT,
-				NVME_LOG_CDW14_UUID_MASK);
-		ret = nvme_get_log(hdl, &cmd, false, NVME_LOG_PAGE_PDU_SIZE);
+		struct nvme_get_log_args args_data = {
+			.args_size	= sizeof(args_data),
+			.fd		= dev_fd(dev),
+			.lid		= SNDK_NVME_GET_DEV_MGMNT_LOG_PAGE_ID,
+			.nsid		= 0xFFFFFFFF,
+			.lpo		= 0,
+			.lsp		= NVME_LOG_LSP_NONE,
+			.lsi		= 0,
+			.rae		= false,
+			.uuidx		= uuid_ix,
+			.csi		= NVME_CSI_NVM,
+			.ot		= false,
+			.len		= length,
+			.log		= data,
+			.timeout	= NVME_DEFAULT_IOCTL_TIMEOUT,
+			.result		= NULL,
+		};
+		ret = nvme_get_log(&args_data);
+
 		if (ret) {
 			fprintf(stderr,
 				"ERROR: SNDK: Unable to read 0x%x Log with uuid %d, ret = 0x%x\n",
@@ -508,16 +527,16 @@ end:
 	return valid;
 }
 
-__u64 sndk_get_drive_capabilities(struct nvme_global_ctx *ctx,
-				  struct nvme_transport_handle *hdl)
+__u64 sndk_get_drive_capabilities(nvme_root_t r, struct nvme_dev *dev)
 {
-	uint32_t read_device_id = -1, read_vendor_id = -1;
 	__u64 capabilities = 0;
-	int ret;
 
-	ret = sndk_get_pci_ids(ctx, hdl, &read_device_id, &read_vendor_id);
+	int ret;
+	uint32_t read_device_id = -1, read_vendor_id = -1;
+
+	ret = sndk_get_pci_ids(r, dev, &read_device_id, &read_vendor_id);
 	if (ret < 0) {
-		if (sndk_get_vendor_id(hdl, &read_vendor_id) < 0)
+		if (sndk_get_vendor_id(dev, &read_vendor_id) < 0)
 			return capabilities;
 	}
 
@@ -527,7 +546,7 @@ __u64 sndk_get_drive_capabilities(struct nvme_global_ctx *ctx,
 	 * so we can only use the vendor_id
 	 */
 	if (read_device_id == -1 && read_vendor_id != -1) {
-		capabilities = sndk_get_enc_drive_capabilities(ctx, hdl);
+		capabilities = sndk_get_enc_drive_capabilities(r, dev);
 		return capabilities;
 	}
 
@@ -536,6 +555,24 @@ __u64 sndk_get_drive_capabilities(struct nvme_global_ctx *ctx,
 		switch (read_device_id) {
 		case SNDK_NVME_SNTMP_DEV_ID:
 		case SNDK_NVME_SNTMP_DEV_ID_1:
+			capabilities |= (SNDK_DRIVE_CAP_C0_LOG_PAGE |
+					SNDK_DRIVE_CAP_C3_LOG_PAGE |
+					SNDK_DRIVE_CAP_CA_LOG_PAGE |
+					SNDK_DRIVE_CAP_OCP_C4_LOG_PAGE |
+					SNDK_DRIVE_CAP_OCP_C5_LOG_PAGE |
+					SNDK_DRIVE_CAP_UDUI |
+					SNDK_DRIVE_CAP_VU_FID_CLEAR_PCIE |
+					SNDK_DRIVE_CAP_CLOUD_SSD_VERSION |
+					SNDK_DRIVE_CAP_LOG_PAGE_DIR |
+					SNDK_DRIVE_CAP_DRIVE_STATUS |
+					SNDK_DRIVE_CAP_SET_LATENCY_MONITOR);
+			break;
+
+		case SNDK_NVME_SNESSD1_DEV_ID_E1L:
+		case SNDK_NVME_SNESSD1_DEV_ID_E2:
+		case SNDK_NVME_SNESSD1_DEV_ID_E3S:
+		case SNDK_NVME_SNESSD1_DEV_ID_E3L:
+		case SNDK_NVME_SNESSD1_DEV_ID_U2:
 			capabilities |= (SNDK_DRIVE_CAP_C0_LOG_PAGE |
 					SNDK_DRIVE_CAP_C3_LOG_PAGE |
 					SNDK_DRIVE_CAP_CA_LOG_PAGE |
@@ -592,24 +629,6 @@ __u64 sndk_get_drive_capabilities(struct nvme_global_ctx *ctx,
 
 	case SNDK_NVME_SNDK_VID:
 		switch (read_device_id) {
-		case SNDK_NVME_SNESSD1_DEV_ID_E1L:
-		case SNDK_NVME_SNESSD1_DEV_ID_E2:
-		case SNDK_NVME_SNESSD1_DEV_ID_E3S:
-		case SNDK_NVME_SNESSD1_DEV_ID_E3L:
-		case SNDK_NVME_SNESSD1_DEV_ID_U2:
-			capabilities |= (SNDK_DRIVE_CAP_C0_LOG_PAGE |
-					SNDK_DRIVE_CAP_C3_LOG_PAGE |
-					SNDK_DRIVE_CAP_CA_LOG_PAGE |
-					SNDK_DRIVE_CAP_OCP_C4_LOG_PAGE |
-					SNDK_DRIVE_CAP_OCP_C5_LOG_PAGE |
-					SNDK_DRIVE_CAP_UDUI |
-					SNDK_DRIVE_CAP_VU_FID_CLEAR_PCIE |
-					SNDK_DRIVE_CAP_CLOUD_SSD_VERSION |
-					SNDK_DRIVE_CAP_LOG_PAGE_DIR |
-					SNDK_DRIVE_CAP_DRIVE_STATUS |
-					SNDK_DRIVE_CAP_SET_LATENCY_MONITOR);
-			break;
-
 		case SNDK_NVME_SN7150_DEV_ID_1:
 		case SNDK_NVME_SN7150_DEV_ID_2:
 		case SNDK_NVME_SN7150_DEV_ID_3:
@@ -634,13 +653,13 @@ __u64 sndk_get_drive_capabilities(struct nvme_global_ctx *ctx,
 
 	/* Check for fallback WDC plugin support */
 	if (!capabilities)
-		capabilities = run_wdc_get_drive_capabilities(ctx, hdl);
+		capabilities = run_wdc_get_drive_capabilities(r, dev);
 
 	return capabilities;
 }
 
-__u64 sndk_get_enc_drive_capabilities(struct nvme_global_ctx *ctx,
-					    struct nvme_transport_handle *hdl)
+__u64 sndk_get_enc_drive_capabilities(nvme_root_t r,
+					    struct nvme_dev *dev)
 {
 	int ret;
 	uint32_t read_vendor_id;
@@ -654,7 +673,7 @@ __u64 sndk_get_enc_drive_capabilities(struct nvme_global_ctx *ctx,
 
 	memset(marketing_name, 0, 64);
 
-	ret = sndk_get_vendor_id(hdl, &read_vendor_id);
+	ret = sndk_get_vendor_id(dev, &read_vendor_id);
 	if (ret < 0)
 		return capabilities;
 
@@ -667,7 +686,7 @@ __u64 sndk_get_enc_drive_capabilities(struct nvme_global_ctx *ctx,
 
 		/* Check for the Sandisk or WDC UUID index  */
 		memset(&uuid_list, 0, sizeof(struct nvme_id_uuid_list));
-		if (!nvme_get_uuid_list(hdl, &uuid_list)) {
+		if (!nvme_get_uuid_list(dev_fd(dev), &uuid_list)) {
 			/* check for the Sandisk UUID first  */
 			uuid_index = nvme_uuid_find(&uuid_list, SNDK_UUID);
 
@@ -684,7 +703,7 @@ __u64 sndk_get_enc_drive_capabilities(struct nvme_global_ctx *ctx,
 		}
 
 		/* verify the 0xC2 Device Manageability log page is supported */
-		if (run_wdc_nvme_check_supported_log_page(ctx, hdl,
+		if (run_wdc_nvme_check_supported_log_page(r, dev,
 				SNDK_NVME_GET_DEV_MGMNT_LOG_PAGE_ID,
 				uuid_index) == false) {
 			fprintf(stderr, "ERROR: SNDK: 0xC2 Log Page not supported, ");
@@ -693,7 +712,7 @@ __u64 sndk_get_enc_drive_capabilities(struct nvme_global_ctx *ctx,
 			goto out;
 		}
 
-		if (!sndk_get_dev_mgment_data(ctx, hdl, &dev_mng_log)) {
+		if (!sndk_get_dev_mgment_data(r, dev, &dev_mng_log)) {
 			fprintf(stderr, "ERROR: SNDK: 0xC2 Log Page not found\n");
 			ret = -1;
 			goto out;
@@ -718,23 +737,24 @@ __u64 sndk_get_enc_drive_capabilities(struct nvme_global_ctx *ctx,
 				(void *)&drive_form_factor))
 			fprintf(stderr, "ERROR: SNDK: Getting Form Factor Failed\n");
 
+
 		/* verify the 0xC3 log page is supported */
-		if (run_wdc_nvme_check_supported_log_page(ctx, hdl,
+		if (run_wdc_nvme_check_supported_log_page(r, dev,
 			SNDK_LATENCY_MON_LOG_ID, 0))
 			capabilities |= SNDK_DRIVE_CAP_C3_LOG_PAGE;
 
 		/* verify the 0xCB log page is supported */
-		if (run_wdc_nvme_check_supported_log_page(ctx, hdl,
+		if (run_wdc_nvme_check_supported_log_page(r, dev,
 			SNDK_NVME_GET_FW_ACT_HISTORY_LOG_ID, 0))
 			capabilities |= SNDK_DRIVE_CAP_FW_ACTIVATE_HISTORY;
 
 		/* verify the 0xCA log page is supported */
-		if (run_wdc_nvme_check_supported_log_page(ctx, hdl,
+		if (run_wdc_nvme_check_supported_log_page(r, dev,
 			SNDK_NVME_GET_DEVICE_INFO_LOG_ID, 0))
 			capabilities |= SNDK_DRIVE_CAP_CA_LOG_PAGE;
 
 		/* verify the 0xD0 log page is supported */
-		if (run_wdc_nvme_check_supported_log_page(ctx, hdl,
+		if (run_wdc_nvme_check_supported_log_page(r, dev,
 			SNDK_NVME_GET_VU_SMART_LOG_ID, 0))
 			capabilities |= SNDK_DRIVE_CAP_D0_LOG_PAGE;
 
@@ -753,11 +773,6 @@ __u64 sndk_get_enc_drive_capabilities(struct nvme_global_ctx *ctx,
 					SNDK_DRIVE_CAP_VU_FID_CLEAR_FW_ACT_HISTORY |
 					SNDK_DRIVE_CAP_VU_FID_CLEAR_PCIE);
 
-			/* verify the 0xC0 log page is supported */
-			if (run_wdc_nvme_check_supported_log_page(ctx, hdl,
-				SNDK_LATENCY_MON_LOG_ID, 0))
-				capabilities |= SNDK_DRIVE_CAP_C0_LOG_PAGE;
-
 			if ((drive_form_factor == SNDK_C2_FORM_FACTOR_SFF_U2) ||
 				(drive_form_factor == SNDK_C2_FORM_FACTOR_EDSFF_E3S))
 				capabilities |= SNDK_DRIVE_CAP_RESIZE_SN861;
@@ -768,7 +783,7 @@ __u64 sndk_get_enc_drive_capabilities(struct nvme_global_ctx *ctx,
 				SNDK_DRIVE_CAP_CLEAR_PCIE);
 
 			/* if the 0xCB log page is supported */
-			if (run_wdc_nvme_check_supported_log_page(ctx, hdl,
+			if (run_wdc_nvme_check_supported_log_page(r, dev,
 				SNDK_NVME_GET_FW_ACT_HISTORY_LOG_ID, 0))
 				capabilities |= SNDK_DRIVE_CAP_FW_ACTIVATE_HISTORY;
 		}
@@ -781,8 +796,8 @@ out:
 	return capabilities;
 }
 
-int sndk_get_serial_name(struct nvme_transport_handle *hdl, char *file,
-			 size_t len, const char *suffix)
+int sndk_get_serial_name(struct nvme_dev *dev, char *file, size_t len,
+				const char *suffix)
 {
 	int i;
 	int ret;
@@ -795,7 +810,7 @@ int sndk_get_serial_name(struct nvme_transport_handle *hdl, char *file,
 	strncpy(orig, file, PATH_MAX - 1);
 	memset(file, 0, len);
 	memset(&ctrl, 0, sizeof(struct nvme_id_ctrl));
-	ret = nvme_identify_ctrl(hdl, &ctrl);
+	ret = nvme_identify_ctrl(dev_fd(dev), &ctrl);
 	if (ret) {
 		fprintf(stderr, "ERROR: SNDK: nvme_identify_ctrl() failed 0x%x\n", ret);
 		return -1;
@@ -843,8 +858,7 @@ void sndk_UtilsGetTime(struct SNDK_UtilsTimeInfo *timeInfo)
 #endif /* HAVE_TM_GMTOFF */
 }
 
-int sndk_UtilsSnprintf(char *buffer, unsigned int sizeOfBuffer,
-		       const char *format, ...)
+int sndk_UtilsSnprintf(char *buffer, unsigned int sizeOfBuffer, const char *format, ...)
 {
 	int res = 0;
 	va_list vArgs;
@@ -857,15 +871,14 @@ int sndk_UtilsSnprintf(char *buffer, unsigned int sizeOfBuffer,
 }
 
 /* Verify the Controller Initiated Option is enabled */
-int sndk_check_ctrl_telemetry_option_disabled(struct nvme_transport_handle *hdl)
+int sndk_check_ctrl_telemetry_option_disabled(struct nvme_dev *dev)
 {
 	int err;
-	__u64 result;
+	__u32 result;
 
-	err = nvme_get_features(hdl, 0,
-		SNDK_VU_DISABLE_CNTLR_TELEMETRY_OPTION_FEATURE_ID,
-		NVME_GET_FEATURES_SEL_CURRENT, 0, 0,
-		NULL, 4, &result);
+	err = nvme_get_features_data(dev_fd(dev),
+		 SNDK_VU_DISABLE_CNTLR_TELEMETRY_OPTION_FEATURE_ID,
+		 0, 4, NULL, &result);
 	if (!err) {
 		if (result) {
 			fprintf(stderr,

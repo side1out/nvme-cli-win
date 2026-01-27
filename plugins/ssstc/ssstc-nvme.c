@@ -10,7 +10,9 @@
 #include "nvme.h"
 #include "libnvme.h"
 #include "plugin.h"
+#ifndef WINDOWS_GCC
 #include "linux/types.h"
+#endif
 #include "nvme-print.h"
 
 #define CREATE_CMD
@@ -375,7 +377,7 @@ void show_ssstc_add_smart_log(struct nvme_additional_smart_log *smart,
 }
 
 static
-int ssstc_get_add_smart_log(int argc, char **argv, struct command *acmd, struct plugin *plugin)
+int ssstc_get_add_smart_log(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
 
 	const char *desc =
@@ -388,8 +390,7 @@ int ssstc_get_add_smart_log(int argc, char **argv, struct command *acmd, struct 
 #endif /* CONFIG_JSONC */
 
 	struct nvme_additional_smart_log smart_log_add;
-	_cleanup_nvme_global_ctx_ struct nvme_global_ctx *ctx = NULL;
-	_cleanup_nvme_transport_handle_ struct nvme_transport_handle *hdl = NULL;
+	struct nvme_dev *dev;
 	int err;
 
 	struct config {
@@ -409,25 +410,25 @@ int ssstc_get_add_smart_log(int argc, char **argv, struct command *acmd, struct 
 		OPT_END()
 	};
 
-	err = parse_and_open(&ctx, &hdl, argc, argv, desc, opts);
+	err = parse_and_open(&dev, argc, argv, desc, opts);
 	if (err)
 		return err;
 
-	err = nvme_get_log_simple(hdl, 0xca, &smart_log_add, sizeof(smart_log_add));
+	err = nvme_get_log_simple(dev_fd(dev), 0xca, sizeof(smart_log_add),
+				  &smart_log_add);
 	if (!err) {
 		if (cfg.json)
-			show_ssstc_add_smart_log_jsn(
-				&smart_log_add, cfg.namespace_id,
-				nvme_transport_handle_get_name(hdl));
+			show_ssstc_add_smart_log_jsn(&smart_log_add, cfg.namespace_id,
+						 dev->name);
 		else if (!cfg.raw_binary)
-			show_ssstc_add_smart_log(
-				&smart_log_add, cfg.namespace_id,
-				nvme_transport_handle_get_name(hdl));
+			show_ssstc_add_smart_log(&smart_log_add, cfg.namespace_id,
+					     dev->name);
 		else
 			d_raw((unsigned char *)&smart_log_add, sizeof(smart_log_add));
 	} else if (err > 0) {
 		nvme_show_status(err);
 	}
+	dev_close(dev);
 	return err;
 
 }

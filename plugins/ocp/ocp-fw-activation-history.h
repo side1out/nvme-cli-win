@@ -6,7 +6,9 @@
  */
 #include <libnvme.h>
 #include "common.h"
+#ifndef WINDOWS_GCC
 #include "linux/types.h"
+#endif
 
 #ifndef OCP_FIRMWARE_ACTIVATION_HISTORY_H
 #define OCP_FIRMWARE_ACTIVATION_HISTORY_H
@@ -40,7 +42,7 @@ struct __packed fw_activation_history {
 	__le64 log_page_guid[2];
 };
 
-int ocp_fw_activation_history_log(int argc, char **argv, struct command *acmd,
+int ocp_fw_activation_history_log(int argc, char **argv, struct command *cmd,
 				  struct plugin *plugin);
 
 #endif

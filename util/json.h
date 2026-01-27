@@ -3,8 +3,14 @@
 #define __JSON__H
 
 #ifdef CONFIG_JSONC
-#include <json.h>
 #include "util/types.h"
+
+#ifdef WINDOWS_GCC
+#include "windows/types.h"
+#include <json-c/json.h>
+#else
+#include <json.h>
+#endif
 
 /* Wrappers around json-c's API */
 

@@ -4,9 +4,7 @@
 #include <errno.h>
 #include <time.h>
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <ccan/compiler/compiler.h>
+#include <ccan/ccan/compiler/compiler.h>
 
 #include "nvme-print.h"
 
@@ -14,7 +12,15 @@
 #include "logging.h"
 #include "nvme.h"
 #include "common.h"
-#include "libnvme.h"
+#ifdef WINDOWS_GCC
+#include "../subprojects/libnvme/src/libnvme.h"
+#include <ws2tcpip.h>
+#include "winsock2.h"
+#else
+#include <libnvme.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#endif
 
 #define ERROR_MSG_LEN 100
 #define NAME_LEN 128
@@ -821,7 +827,7 @@ static void json_ana_log(struct nvme_ana_log *ana_log, const char *devname,
 	json_print(r);
 }
 
-static void json_select_result(enum nvme_features_id fid, __u64 result)
+static void json_select_result(enum nvme_features_id fid, __u32 result)
 {
 	struct json_object *r = json_r ? json_r : json_create_object();
 	char json_str[STR_LEN];
@@ -1781,7 +1787,7 @@ static void json_pel_set_feature(void *pevent_log_info, __u32 offset,
 				 struct json_object *valid_attrs)
 {
 	struct nvme_set_feature_event *set_feat_event = pevent_log_info + offset;
-	int fid = NVME_GET(le32_to_cpu(set_feat_event->cdw_mem[0]), SET_FEATURES_CDW10_FID);
+	int fid = NVME_GET(le32_to_cpu(set_feat_event->cdw_mem[0]), FEATURES_CDW10_FID);
 	int cdw11 = le32_to_cpu(set_feat_event->cdw_mem[1]);
 	int dword_cnt = NVME_SET_FEAT_EVENT_DW_COUNT(set_feat_event->layout);
 	unsigned char *mem_buf;
@@ -2611,15 +2617,14 @@ static void json_print_nvme_subsystem_ctrls(nvme_subsystem_t s,
 	}
 }
 
-static void json_print_nvme_subsystem_list(struct nvme_global_ctx *ctx,
-					   bool show_ana)
+static void json_print_nvme_subsystem_list(nvme_root_t r, bool show_ana)
 {
 	struct json_object *host_attrs, *subsystem_attrs;
 	struct json_object *subsystems, *paths;
 	struct json_object *a = json_create_array();
 	nvme_host_t h;
 
-	nvme_for_each_host(ctx, h) {
+	nvme_for_each_host(r, h) {
 		nvme_subsystem_t s;
 		const char *hostid;
 
@@ -4174,7 +4179,7 @@ static void json_lba_range(struct nvme_lba_range_type *lbrt, int nr_ranges)
 	json_print(r);
 }
 
-static void json_lba_status_info(__u64 result)
+static void json_lba_status_info(__u32 result)
 {
 	struct json_object *r = json_create_object();
 
@@ -4520,7 +4525,7 @@ static void json_print_detail_list(nvme_subsystem_t s, struct json_object *jss)
 	obj_add_obj(jss, "Controllers", jctrls);
 }
 
-static void json_detail_list_v2(struct nvme_global_ctx *ctx)
+static void json_detail_list_v2(nvme_root_t t)
 {
 	struct json_object *r = json_create_object();
 	struct json_object *jdev = json_create_array();
@@ -4528,7 +4533,7 @@ static void json_detail_list_v2(struct nvme_global_ctx *ctx)
 	nvme_host_t h;
 	nvme_subsystem_t s;
 
-	nvme_for_each_host(ctx, h) {
+	nvme_for_each_host(t, h) {
 		struct json_object *hss = json_create_object();
 		struct json_object *jsslist = json_create_array();
 		const char *hostid;
@@ -4561,7 +4566,7 @@ static void json_detail_list_v2(struct nvme_global_ctx *ctx)
 	json_print(r);
 }
 
-static void json_detail_list(struct nvme_global_ctx *ctx)
+static void json_detail_list(nvme_root_t t)
 {
 	struct json_object *r = json_create_object();
 	struct json_object *jdev = json_create_array();
@@ -4572,7 +4577,7 @@ static void json_detail_list(struct nvme_global_ctx *ctx)
 	nvme_path_t p;
 	nvme_ns_t n;
 
-	nvme_for_each_host(ctx, h) {
+	nvme_for_each_host(t, h) {
 		struct json_object *hss = json_create_object();
 		struct json_object *jsslist = json_create_array();
 		const char *hostid;
@@ -4693,7 +4698,7 @@ static struct json_object *json_list_item_obj(nvme_ns_t n)
 	return r;
 }
 
-static void json_simple_list(struct nvme_global_ctx *ctx)
+static void json_simple_list(nvme_root_t t)
 {
 	struct json_object *r = json_create_object();
 	struct json_object *jdevices = json_create_array();
@@ -4703,7 +4708,7 @@ static void json_simple_list(struct nvme_global_ctx *ctx)
 	nvme_ctrl_t c;
 	nvme_ns_t n;
 
-	nvme_for_each_host(ctx, h) {
+	nvme_for_each_host(t, h) {
 		nvme_for_each_subsystem(h, s) {
 			nvme_subsystem_for_each_ns(s, n)
 				array_add_obj(jdevices, json_list_item_obj(n));
@@ -4727,15 +4732,15 @@ static void json_list_item(nvme_ns_t n, struct table *t)
 	json_print(r);
 }
 
-static void json_print_list_items(struct nvme_global_ctx *ctx)
+static void json_print_list_items(nvme_root_t t)
 {
 	if (json_print_ops.flags & VERBOSE) {
 		if (nvme_cfg.output_format_ver == 2)
-			json_detail_list_v2(ctx);
+			json_detail_list_v2(t);
 		else
-			json_detail_list(ctx);
+			json_detail_list(t);
 	} else
-		json_simple_list(ctx);
+		json_simple_list(t);
 }
 
 static unsigned int json_subsystem_topology_multipath(nvme_subsystem_t s,
@@ -4830,14 +4835,14 @@ static void json_print_nvme_subsystem_topology(nvme_subsystem_t s,
 	}
 }
 
-static void json_simple_topology(struct nvme_global_ctx *ctx)
+static void json_simple_topology(nvme_root_t r)
 {
 	struct json_object *host_attrs, *subsystem_attrs;
 	struct json_object *subsystems, *namespaces;
 	struct json_object *a = json_create_array();
 	nvme_host_t h;
 
-	nvme_for_each_host(ctx, h) {
+	nvme_for_each_host(r, h) {
 		nvme_subsystem_t s;
 		const char *hostid;
 
@@ -4851,8 +4856,6 @@ static void json_simple_topology(struct nvme_global_ctx *ctx)
 			subsystem_attrs = json_create_object();
 			obj_add_str(subsystem_attrs, "Name", nvme_subsystem_get_name(s));
 			obj_add_str(subsystem_attrs, "NQN", nvme_subsystem_get_nqn(s));
-			obj_add_str(subsystem_attrs, "IOPolicy",
-					nvme_subsystem_get_iopolicy(s));
 
 			if (verbose_mode()) {
 				obj_add_str(subsystem_attrs, "Model",
@@ -4861,6 +4864,8 @@ static void json_simple_topology(struct nvme_global_ctx *ctx)
 						nvme_subsystem_get_serial(s));
 				obj_add_str(subsystem_attrs, "Firmware",
 						nvme_subsystem_get_fw_rev(s));
+				obj_add_str(subsystem_attrs, "IOPolicy",
+						nvme_subsystem_get_iopolicy(s));
 				obj_add_str(subsystem_attrs, "Type",
 						nvme_subsystem_get_type(s));
 			}
@@ -4920,7 +4925,7 @@ static void json_directive_show_fields_identify(__u8 doper, __u8 *field, struct 
 	}
 }
 
-static void json_directive_show_fields_streams(__u8 doper, unsigned int result, __u16 *field,
+static void json_directive_show_fields_streams(__u8 doper,  unsigned int result, __u16 *field,
 					       struct json_object *r)
 {
 	int count;
@@ -4974,7 +4979,7 @@ static void json_directive_show_fields(__u8 dtype, __u8 doper, unsigned int resu
 	}
 }
 
-static void json_directive_show(__u8 type, __u8 oper, __u16 spec, __u32 nsid, __u64 result,
+static void json_directive_show(__u8 type, __u8 oper, __u16 spec, __u32 nsid, __u32 result,
 				void *buf, __u32 len)
 {
 	struct json_object *r = json_create_object();
@@ -4989,7 +4994,7 @@ static void json_directive_show(__u8 type, __u8 oper, __u16 spec, __u32 nsid, __
 	obj_add_str(r, "spec", json_str);
 	sprintf(json_str, "%#x", nsid);
 	obj_add_str(r, "NSID", json_str);
-	sprintf(json_str, "%#"PRIx64, (uint64_t)result);
+	sprintf(json_str, "%#x", result);
 	obj_add_result(r, json_str);
 
 	if (verbose_mode()) {
@@ -5002,7 +5007,7 @@ static void json_directive_show(__u8 type, __u8 oper, __u16 spec, __u32 nsid, __
 
 	json_print(r);
 }
-
+#ifdef FBS
 static void json_discovery_log(struct nvmf_discovery_log *log, int numrec)
 {
 	struct json_object *r = json_create_object();
@@ -5044,7 +5049,7 @@ static void json_discovery_log(struct nvmf_discovery_log *log, int numrec)
 
 	json_print(r);
 }
-
+#endif
 static void json_connect_msg(nvme_ctrl_t c)
 {
 	struct json_object *r = json_create_object();
@@ -5093,26 +5098,6 @@ static void json_output_status(int status)
 	}
 
 	obj_print(r);
-}
-
-static void json_output_opcode_status(int status, bool admin, __u8 opcode)
-{
-	struct json_object *r;
-	char json_str[STR_LEN];
-	int val = nvme_status_get_value(status);
-	int type = nvme_status_get_type(status);
-
-	if (status >= 0 && type == NVME_STATUS_TYPE_NVME) {
-		sprintf(json_str, "status: %d", status);
-		r = obj_create(json_str);
-		obj_add_str(r, "error",
-			    nvme_opcode_status_to_string(val, admin, opcode));
-		obj_add_str(r, "type", "nvme");
-		obj_print(r);
-		return;
-	}
-
-	json_output_status(status);
 }
 
 static void json_output_error_status(int status, const char *msg, va_list ap)
@@ -5368,7 +5353,7 @@ static void json_reachability_associations_log(struct nvme_reachability_associat
 
 	json_print(r);
 }
-
+#ifdef FBS
 static void json_host_discovery_log(struct nvme_host_discover_log *log)
 {
 	struct json_object *r = json_create_object();
@@ -5437,7 +5422,6 @@ static void json_host_discovery_log(struct nvme_host_discover_log *log)
 		obj_add_obj(r, json_str, hedlpe_o);
 	}
 }
-
 static void obj_add_traddr(struct json_object *o, const char *k, __u8 adrfam, __u8 *traddr)
 {
 	int af = AF_INET;
@@ -5496,6 +5480,7 @@ static void json_ave_discovery_log(struct nvme_ave_discover_log *log)
 		obj_add_obj(r, json_str, adlpe_o);
 	}
 }
+#endif
 
 static void json_pull_model_ddc_req_log(struct nvme_pull_model_ddc_req_log *log)
 {
@@ -5517,7 +5502,9 @@ static struct print_ops json_print_ops = {
 	.ctrl_registers			= json_ctrl_registers,
 	.ctrl_register			= json_ctrl_register,
 	.directive			= json_directive_show,
+#ifdef FBS
 	.discovery_log			= json_discovery_log,
+#endif
 	.effects_log_list		= json_effects_log_list,
 	.endurance_group_event_agg_log	= json_endurance_group_event_agg_log,
 	.endurance_group_list		= json_nvme_endurance_group_list,
@@ -5580,8 +5567,10 @@ static struct print_ops json_print_ops = {
 	.dispersed_ns_psub_log		= json_dispersed_ns_psub_log,
 	.reachability_groups_log	= json_reachability_groups_log,
 	.reachability_associations_log	= json_reachability_associations_log,
+#ifdef FBS
 	.host_discovery_log		= json_host_discovery_log,
 	.ave_discovery_log		= json_ave_discovery_log,
+#endif
 	.pull_model_ddc_req_log		= json_pull_model_ddc_req_log,
 
 	/* libnvme tree print functions */
@@ -5597,7 +5586,6 @@ static struct print_ops json_print_ops = {
 	.show_message			= json_output_message,
 	.show_perror			= json_output_perror,
 	.show_status			= json_output_status,
-	.show_opcode_status		= json_output_opcode_status,
 	.show_error_status		= json_output_error_status,
 	.show_key_value			= json_output_key_value,
 };

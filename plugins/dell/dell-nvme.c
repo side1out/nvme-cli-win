@@ -9,7 +9,11 @@
 
 #include "common.h"
 #include "nvme.h"
-#include "libnvme.h"
+#ifdef WINDOWS_GCC
+#include "../subprojects/libnvme/src/libnvme.h"
+#else
+#include <libnvme.h>
+#endif
 #include "plugin.h"
 
 #define CREATE_CMD
@@ -47,8 +51,8 @@ static void dell_id_ctrl(__u8 *vs, struct json_object *root)
 	printf("array_ver  : %s\n", array_ver);
 }
 
-static int id_ctrl(int argc, char **argv, struct command *acmd,
+static int id_ctrl(int argc, char **argv, struct command *cmd,
 		struct plugin *plugin)
 {
-	return __id_ctrl(argc, argv, acmd, plugin, dell_id_ctrl);
+	return __id_ctrl(argc, argv, cmd, plugin, dell_id_ctrl);
 }

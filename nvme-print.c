@@ -376,10 +376,10 @@ void nvme_show_supported_cap_config_log(
 	nvme_print(supported_cap_config_list_log, flags, cap);
 }
 
-void nvme_show_subsystem_list(struct nvme_global_ctx *ctx, bool show_ana,
+void nvme_show_subsystem_list(nvme_root_t r, bool show_ana,
 			      nvme_print_flags_t flags)
 {
-	nvme_print(print_nvme_subsystem_list, flags, ctx, show_ana);
+	nvme_print(print_nvme_subsystem_list, flags, r, show_ana);
 }
 
 const char *nvme_register_szu_to_string(__u8 szu)
@@ -491,10 +491,9 @@ void nvme_show_single_property(int offset, uint64_t value64, nvme_print_flags_t 
 	nvme_print(single_property, flags, offset, value64);
 }
 
-void nvme_show_relatives(struct nvme_global_ctx *ctx, const char *name,
-			 nvme_print_flags_t flags)
+void nvme_show_relatives(nvme_root_t r, const char *name, nvme_print_flags_t flags)
 {
-	nvme_print(relatives, flags, ctx, name);
+	nvme_print(relatives, flags, r, name);
 }
 
 void d(unsigned char *buf, int len, int width, int group)
@@ -520,47 +519,6 @@ void nvme_show_status(int status)
 		ops->show_status(status);
 }
 
-static void nvme_show_cmd_err(const char *msg, bool admin,
-			      struct nvme_passthru_cmd *cmd, int err)
-{
-	if (!err)
-		return;
-	else if (err < 0)
-		nvme_show_error("%s: %s", msg, nvme_strerror(-err));
-	else if (cmd)
-		nvme_show_opcode_status(err, false, cmd->opcode);
-	else
-		nvme_show_status(err);
-}
-
-void nvme_show_err(const char *msg, int err)
-{
-	nvme_show_cmd_err(msg, false, NULL, err);
-}
-
-void nvme_show_io_cmd_err(const char *msg, struct nvme_passthru_cmd *cmd,
-			  int err)
-{
-	nvme_show_cmd_err(msg, false, cmd, err);
-}
-
-void nvme_show_admin_cmd_err(const char *msg, struct nvme_passthru_cmd *cmd,
-			     int err)
-{
-	nvme_show_cmd_err(msg, true, cmd, err);
-}
-
-void nvme_show_opcode_status(int status, bool admin, __u8 opcode)
-{
-	struct print_ops *ops = nvme_print_ops(NORMAL);
-
-	if (nvme_is_output_format_json())
-		ops = nvme_print_ops(JSON);
-
-	if (ops && ops->show_opcode_status)
-		ops->show_opcode_status(status, admin, opcode);
-}
-
 void nvme_show_error_status(int status, const char *msg, ...)
 {
 	struct print_ops *ops = nvme_print_ops(NORMAL);
@@ -571,7 +529,7 @@ void nvme_show_error_status(int status, const char *msg, ...)
 	if (nvme_is_output_format_json())
 		ops = nvme_print_ops(JSON);
 
-	if (ops && ops->show_error_status)
+	if (ops && ops->show_status)
 		ops->show_error_status(status, msg, ap);
 
 	va_end(ap);
@@ -828,20 +786,15 @@ const char *nvme_log_to_string(__u8 lid)
 	case NVME_LOG_LID_PHY_RX_EOM:			return "Physical Interface Receiver Eye Opening Measurement";
 	case NVME_LOG_LID_REACHABILITY_GROUPS:		return "Reachability Groups";
 	case NVME_LOG_LID_REACHABILITY_ASSOCIATIONS:	return "Reachability Associations";
-	case NVME_LOG_LID_CHANGED_ALLOC_NS:		return "Changed Allocated Namespace List";
-	case NVME_LOG_LID_DEV_PERSONALITY:		return "Device Personalities";
-	case NVME_LOG_LID_CROSS_CTRL_RESET:		return "Cross-Controller Reset";
-	case NVME_LOG_LID_LOST_HOST_COMMUNICATION:	return "Lost Host Communication";
+	case NVME_LOG_LID_CHANGED_ALLOC_NS_LIST:	return "Changed Allocated Namespace List";
 	case NVME_LOG_LID_FDP_CONFIGS:			return "FDP Configurations";
 	case NVME_LOG_LID_FDP_RUH_USAGE:		return "Reclaim Unit Handle Usage";
 	case NVME_LOG_LID_FDP_STATS:			return "FDP Statistics";
 	case NVME_LOG_LID_FDP_EVENTS:			return "FDP Events";
-	case NVME_LOG_LID_POWER_MEASUREMENT:		return "Power Measurement";
-	case NVME_LOG_LID_DISCOVERY:			return "Discovery";
-	case NVME_LOG_LID_HOST_DISCOVERY:		return "Host Discovery";
-	case NVME_LOG_LID_AVE_DISCOVERY:		return "AVE Discovery";
+	case NVME_LOG_LID_DISCOVER:			return "Discovery";
+	case NVME_LOG_LID_HOST_DISCOVER:		return "Host Discovery";
+	case NVME_LOG_LID_AVE_DISCOVER:			return "AVE Discovery";
 	case NVME_LOG_LID_PULL_MODEL_DDC_REQ:		return "Pull Model DDC Request";
-	case NVME_LOG_LID_SANITIZE_NS_STATUS_LIST:	return "Sanitize Namespace Status List";
 	case NVME_LOG_LID_RESERVATION:			return "Reservation Notification";
 	case NVME_LOG_LID_SANITIZE:			return "Sanitize Status";
 	case NVME_LOG_LID_ZNS_CHANGED_ZONES:		return "Changed Zone List";
@@ -948,10 +901,6 @@ const char *nvme_feature_to_string(enum nvme_features_id feature)
 	case NVME_FEAT_FID_NS_ADMIN_LABEL:	return "Namespace Admin Label";
 	case NVME_FEAT_FID_KEY_VALUE:		return "Key Value Configuration";
 	case NVME_FEAT_FID_CTRL_DATA_QUEUE:	return "Controller Data Queue";
-	case NVME_FEAT_FID_CONF_DEV_PERSONALITY:return "Configurable Device Personality";
-	case NVME_FEAT_FID_POWER_LIMIT:		return "Power Limit";
-	case NVME_FEAT_FID_POWER_THRESH:	return "Power Threshold";
-	case NVME_FEAT_FID_POEWR_MEASUREMENT:	return "Power Measurement";
 	case NVME_FEAT_FID_EMB_MGMT_CTRL_ADDR:	return "Embedded Management Controller Address";
 	case NVME_FEAT_FID_HOST_MGMT_AGENT_ADDR:return "Host Management Agent Address";
 	case NVME_FEAT_FID_ENH_CTRL_METADATA:	return "Enhanced Controller Metadata";
@@ -1055,7 +1004,7 @@ const char *nvme_select_to_string(int sel)
 	return "Reserved";
 }
 
-void nvme_show_select_result(enum nvme_features_id fid, __u64 result)
+void nvme_show_select_result(enum nvme_features_id fid, __u32 result)
 {
 	nvme_print(select_result, NORMAL, fid, result);
 }
@@ -1241,7 +1190,7 @@ const char *nvme_bpwps_to_string(__u8 bpwps)
 	}
 }
 
-void nvme_directive_show(__u8 type, __u8 oper, __u16 spec, __u32 nsid, __u64 result,
+void nvme_directive_show(__u8 type, __u8 oper, __u16 spec, __u32 nsid, __u32 result,
 			 void *buf, __u32 len, nvme_print_flags_t flags)
 {
 	nvme_print(directive, flags, type, oper, spec, nsid, result, buf, len);
@@ -1259,7 +1208,7 @@ const char *nvme_plm_window_to_string(__u32 plm)
 	}
 }
 
-void nvme_show_lba_status_info(__u64 result)
+void nvme_show_lba_status_info(__u32 result)
 {
 	nvme_print(lba_status_info, NORMAL, result);
 }
@@ -1560,26 +1509,26 @@ void nvme_show_list_item(nvme_ns_t n, struct table *t)
 	nvme_print(list_item, NORMAL, n, t);
 }
 
-void nvme_show_list_items(struct nvme_global_ctx *ctx, nvme_print_flags_t flags)
+void nvme_show_list_items(nvme_root_t r, nvme_print_flags_t flags)
 {
-	nvme_print(list_items, flags, ctx);
+	nvme_print(list_items, flags, r);
 }
 
-void nvme_show_topology(struct nvme_global_ctx *ctx,
+void nvme_show_topology(nvme_root_t r,
 			enum nvme_cli_topo_ranking ranking,
 			nvme_print_flags_t flags)
 {
 	if (ranking == NVME_CLI_TOPO_NAMESPACE)
-		nvme_print(topology_namespace, flags, ctx);
+		nvme_print(topology_namespace, flags, r);
 	else if (ranking == NVME_CLI_TOPO_CTRL)
-		nvme_print(topology_ctrl, flags, ctx);
+		nvme_print(topology_ctrl, flags, r);
 	else
-		nvme_print(topology_multipath, flags, ctx);
+		nvme_print(topology_multipath, flags, r);
 }
 
-void nvme_show_topology_tabular(struct nvme_global_ctx *ctx, nvme_print_flags_t flags)
+void nvme_show_topology_tabular(nvme_root_t r, nvme_print_flags_t flags)
 {
-	nvme_print(topology_tabular, flags, ctx);
+	nvme_print(topology_tabular, flags, r);
 }
 
 void nvme_show_message(bool error, const char *msg, ...)

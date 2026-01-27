@@ -20,6 +20,10 @@
 #include <errno.h>
 #include <string.h>
 
+#ifdef WINDOWS_GCC
+#include "../windows/compat.h"
+#endif
+
 #include "table.h"
 
 static int table_get_value_width(struct value *v)

@@ -15,7 +15,11 @@
 #include "nvme.h"
 #include "libnvme.h"
 #include "plugin.h"
+#ifdef WINDOWS_GCC
+#include <windows/types.h>
+#else
 #include "linux/types.h"
+#endif
 #include "nvme-print.h"
 
 #include "solidigm-smart.h"
@@ -222,16 +226,14 @@ static void vu_smart_log_show(struct vu_smart_log *payload, unsigned int nsid, c
 		smart_log_item_print(&item[i]);
 }
 
-int solidigm_get_additional_smart_log(int argc, char **argv, struct command *acmd, struct plugin *plugin)
+int solidigm_get_additional_smart_log(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
 	const char *desc =
 	    "Get Solidigm vendor specific smart log (optionally, for the specified namespace), and show it.";
 	const int solidigm_vu_smart_log_id = 0xCA;
 	struct vu_smart_log smart_log_payload;
 	nvme_print_flags_t flags;
-	_cleanup_nvme_global_ctx_ struct nvme_global_ctx *ctx = NULL;
-	_cleanup_nvme_transport_handle_ struct nvme_transport_handle *hdl = NULL;
-	struct nvme_passthru_cmd cmd;
+	_cleanup_nvme_dev_ struct nvme_dev *dev = NULL;
 	int err;
 	__u8 uuid_index;
 
@@ -252,34 +254,47 @@ int solidigm_get_additional_smart_log(int argc, char **argv, struct command *acm
 		OPT_END()
 	};
 
-	err = parse_and_open(&ctx, &hdl, argc, argv, desc, opts);
+	err = parse_and_open(&dev, argc, argv, desc, opts);
 	if (err)
 		return err;
 
 	err = validate_output_format(cfg.output_format, &flags);
 	if (err < 0) {
 		fprintf(stderr, "Invalid output format '%s'\n", cfg.output_format);
+		dev_close(dev);
 		return err;
 	}
 
-	sldgm_get_uuid_index(hdl, &uuid_index);
+	sldgm_get_uuid_index(dev, &uuid_index);
 
-	nvme_init_get_log(&cmd, NVME_NSID_ALL,
-			  solidigm_vu_smart_log_id, NVME_CSI_NVM,
-			  &smart_log_payload, sizeof(smart_log_payload));
-	cmd.cdw14 |= NVME_FIELD_ENCODE(uuid_index,
-				       NVME_LOG_CDW14_UUID_SHIFT,
-				       NVME_LOG_CDW14_UUID_MASK);
-	err = nvme_get_log(hdl, &cmd, false, NVME_LOG_PAGE_PDU_SIZE);
+	struct nvme_get_log_args args = {
+		.lpo = 0,
+		.result = NULL,
+		.log = &smart_log_payload,
+		.args_size = sizeof(args),
+		.fd = dev_fd(dev),
+		.timeout = NVME_DEFAULT_IOCTL_TIMEOUT,
+		.lid = solidigm_vu_smart_log_id,
+		.len = sizeof(smart_log_payload),
+		.nsid = NVME_NSID_ALL,
+		.csi = NVME_CSI_NVM,
+		.lsi = NVME_LOG_LSI_NONE,
+		.lsp = NVME_LOG_LSP_NONE,
+		.uuidx = uuid_index,
+		.rae = false,
+		.ot = false,
+	};
+
+	err =  nvme_get_log(&args);
 	if (!err) {
 		if (flags & JSON)
 			vu_smart_log_show_json(&smart_log_payload,
-					       cfg.namespace_id, nvme_transport_handle_get_name(hdl));
+					       cfg.namespace_id, dev->name);
 		else if (flags & BINARY)
 			d_raw((unsigned char *)&smart_log_payload, sizeof(smart_log_payload));
 		else
 			vu_smart_log_show(&smart_log_payload, cfg.namespace_id,
-					  nvme_transport_handle_get_name(hdl), uuid_index);
+					  dev->name, uuid_index);
 	} else if (err > 0) {
 		nvme_show_status(err);
 	}

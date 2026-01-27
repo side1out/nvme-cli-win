@@ -5,9 +5,17 @@
 /* type conversion helpers */
 
 #include <stdint.h>
+#ifdef WINDOWS_GCC
+#include "windows/types.h"
+#else
 #include <linux/types.h>
+#endif
 
+#ifdef WINDOWS_GCC
+#include "../subprojects/libnvme/src/libnvme.h"
+#else
 #include <libnvme.h>
+#endif
 
 #define ABSOLUTE_ZERO_CELSIUS -273
 

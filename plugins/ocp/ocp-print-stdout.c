@@ -168,15 +168,11 @@ static void stdout_smart_extended_log(struct ocp_smart_extended_log *log, unsign
 	case 0 ... 1:
 		break;
 	default:
-	case 6:
-		printf("  Form factor					%d\n",
-			log->form_factor);
-		printf("  Die in use badnandblock-Raw		%"PRIu64"\n",
-			int48_to_long(log->die_in_use_bad_nand_block_raw));
-		printf("  Die in use badnandblock-Normal		%d\n",
-			le16_to_cpu(log->die_in_use_bad_nand_block_normalized));
-		fallthrough;
-	case 5:
+	case 4:
+		printf("  NVMe Command Set Errata Version               %d\n",
+			log->nvme_cmdset_errata_version);
+		printf("  Lowest Permitted Firmware Revision            %"PRIu64"\n",
+			le64_to_cpu(log->lowest_permitted_fw_rev));
 		printf("  NVMe Over Pcie Errata Version			%d\n",
 			log->nvme_over_pcie_errate_version);
 		printf("  NVMe Mi Errata Version			%d\n",
@@ -222,12 +218,6 @@ static void stdout_smart_extended_log(struct ocp_smart_extended_log *log, unsign
 			printf("%c", log->dssd_firmware_build_label[i]);
 		printf("\n");
 		fallthrough;
-	case 4:
-		printf("  NVMe Command Set Errata Version               %d\n",
-			log->nvme_cmdset_errata_version);
-		printf("  Lowest Permitted Firmware Revision            %"PRIu64"\n",
-			le64_to_cpu(log->lowest_permitted_fw_rev));
-		fallthrough;
 	case 2 ... 3:
 		printf("  Errata Version Field                          %d\n",
 			log->dssd_errata_version);
@@ -256,15 +246,14 @@ static void stdout_telemetry_log(struct ocp_telemetry_parse_options *options)
 #endif /* CONFIG_JSONC */
 }
 
-static void stdout_c3_log(struct nvme_transport_handle *hdl, struct ssd_latency_monitor_log *log_data)
+static void stdout_c3_log(struct nvme_dev *dev, struct ssd_latency_monitor_log *log_data)
 {
 	char ts_buf[128];
 	int i, j;
 	__u16 log_page_version = le16_to_cpu(log_data->log_page_version);
 
 	printf("-Latency Monitor/C3 Log Page Data-\n");
-	printf("  Controller   :  %s\n",
-	       nvme_transport_handle_get_name(hdl));
+	printf("  Controller   :  %s\n", dev->name);
 	printf("  Feature Status                     0x%x\n",
 	       log_data->feature_status);
 	printf("  Active Bucket Timer                %d min\n",
@@ -395,7 +384,7 @@ static void stdout_c3_log(struct nvme_transport_handle *hdl, struct ssd_latency_
 	}
 }
 
-static void stdout_c5_log(struct nvme_transport_handle *hdl, struct unsupported_requirement_log *log_data)
+static void stdout_c5_log(struct nvme_dev *dev, struct unsupported_requirement_log *log_data)
 {
 	int j;
 
@@ -696,7 +685,7 @@ static void stdout_c9_log(struct telemetry_str_log_format *log_data, __u8 *log_d
 	}
 }
 
-static void stdout_c7_log(struct nvme_transport_handle *hdl, struct tcg_configuration_log *log_data)
+static void stdout_c7_log(struct nvme_dev *dev, struct tcg_configuration_log *log_data)
 {
 	int j;
 	__u16 log_page_version = le16_to_cpu(log_data->log_page_version);

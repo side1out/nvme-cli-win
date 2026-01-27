@@ -94,14 +94,15 @@ COMMAND_LIST(
 	ENTRY("verify", "Submit a verify command, return results", verify_cmd)
 	ENTRY("sanitize", "Submit a sanitize command", sanitize_cmd)
 	ENTRY("sanitize-log", "Retrieve sanitize log, show it", sanitize_log)
-	ENTRY("sanitize-ns", "Submit a sanitize namespace command",
-	      sanitize_ns_cmd)
 	ENTRY("reset", "Resets the controller", reset)
 	ENTRY("subsystem-reset", "Resets the subsystem", subsystem_reset)
 	ENTRY("ns-rescan", "Rescans the NVME namespaces", ns_rescan)
+#ifdef REGS
 	ENTRY("show-regs", "Shows the controller registers or properties. Requires character device", show_registers)
 	ENTRY("set-reg", "Set a register and show the resulting value", set_register)
 	ENTRY("get-reg", "Get a register and show the resulting value", get_register)
+#endif
+#ifdef FBS
 	ENTRY("discover", "Discover NVMeoF subsystems", discover_cmd)
 	ENTRY("connect-all", "Discover and Connect to NVMeoF subsystems", connect_all_cmd)
 	ENTRY("connect", "Connect to NVMeoF subsystem", connect_cmd)
@@ -115,13 +116,18 @@ COMMAND_LIST(
 	ENTRY("gen-tls-key", "Generate NVMeoF TLS PSK", gen_tls_key)
 	ENTRY("check-tls-key", "Validate NVMeoF TLS PSK", check_tls_key)
 	ENTRY("tls-key", "Manipulate NVMeoF TLS PSK", tls_key)
+#endif
 	ENTRY("dir-receive", "Submit a Directive Receive command, return results", dir_receive)
 	ENTRY("dir-send", "Submit a Directive Send command, return results", dir_send)
 	ENTRY("virt-mgmt", "Manage Flexible Resources between Primary and Secondary Controller", virtual_mgmt)
+#ifdef RPMB
 	ENTRY("rpmb", "Replay Protection Memory Block commands", rpmb_cmd)
+#endif
 	ENTRY("lockdown", "Submit a Lockdown command,return result", lockdown_cmd)
-	ENTRY("dim", "Send Discovery Information Management command to a Discovery Controller", dim_cmd) \
-	ENTRY("show-topology", "Show the topology", show_topology_cmd) \
+#ifdef FBS
+	ENTRY("dim", "Send Discovery Information Management command to a Discovery Controller", dim_cmd) 
+#endif
+	ENTRY("show-topology", "Show the topology", show_topology_cmd) 
 	ENTRY("io-mgmt-recv", "I/O Management Receive", io_mgmt_recv)
 	ENTRY("io-mgmt-send", "I/O Management Send", io_mgmt_send)
 	ENTRY("nvme-mi-recv", "Submit a NVMe-MI Receive command, return results", nmi_recv)

@@ -7,15 +7,24 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <ccan/strset/strset.h>
-#include <ccan/htable/htable_type.h>
-#include <ccan/htable/htable.h>
-#include <ccan/hash/hash.h>
+#include <ccan/ccan/strset/strset.h>
+#include <ccan/ccan/htable/htable_type.h>
+#include <ccan/ccan/htable/htable.h>
+#include <ccan/ccan/hash/hash.h>
 
 #include "nvme.h"
-#include "libnvme.h"
+#ifdef WINDOWS_GCC
+#include "windows/compat.h"
+#include "winsock2.h"
+#include "windows.h"
+#include "subprojects/libnvme/src/libnvme.h"
+#include <ws2tcpip.h>
+#include "subprojects/libnvme/src/nvme/mi.h"
+#else
+#include <libnvme.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#endif
 #include "nvme-print.h"
 #include "nvme-models.h"
 #include "util/suffix.h"
@@ -105,7 +114,7 @@ static void htable_ns_add_unique(struct htable_ns *ht, nvme_ns_t n)
 }
 
 struct nvme_resources {
-	struct nvme_global_ctx *ctx;
+	nvme_root_t r;
 
 	struct htable_subsys ht_s;
 	struct htable_ctrl ht_c;
@@ -120,7 +129,7 @@ struct nvme_resources_table {
 	struct table *t;
 };
 
-static int nvme_resources_init(struct nvme_global_ctx *ctx, struct nvme_resources *res)
+static int nvme_resources_init(nvme_root_t r, struct nvme_resources *res)
 {
 	nvme_host_t h;
 	nvme_subsystem_t s;
@@ -128,7 +137,7 @@ static int nvme_resources_init(struct nvme_global_ctx *ctx, struct nvme_resource
 	nvme_ns_t n;
 	nvme_path_t p;
 
-	res->ctx = ctx;
+	res->r = r;
 	htable_subsys_init(&res->ht_s);
 	htable_ctrl_init(&res->ht_c);
 	htable_ns_init(&res->ht_n);
@@ -136,7 +145,7 @@ static int nvme_resources_init(struct nvme_global_ctx *ctx, struct nvme_resource
 	strset_init(&res->ctrls);
 	strset_init(&res->namespaces);
 
-	nvme_for_each_host(ctx, h) {
+	nvme_for_each_host(r, h) {
 		nvme_for_each_subsystem(h, s) {
 			htable_subsys_add(&res->ht_s, s);
 			strset_add(&res->subsystems, nvme_subsystem_get_name(s));
@@ -277,7 +286,7 @@ static void stdout_persistent_event_log_fdp_events(unsigned int cdw11, unsigned 
 	}
 }
 
-void nvme_show_pel_header(struct nvme_persistent_event_log *pevent_log_head, int human)
+static void pel_header(struct nvme_persistent_event_log *pevent_log_head, int human)
 {
 	printf("Log Identifier: %u\n", pevent_log_head->lid);
 	printf("Total Number of Events: %u\n", le32_to_cpu(pevent_log_head->tnev));
@@ -466,7 +475,7 @@ static void pel_set_feature_event(void *pevent_log_info, __u32 offset)
 
 	printf("Set Feature Event Entry:\n");
 	dword_cnt = NVME_SET_FEAT_EVENT_DW_COUNT(set_feat_event->layout);
-	fid = NVME_GET(le32_to_cpu(set_feat_event->cdw_mem[0]), SET_FEATURES_CDW10_FID);
+	fid = NVME_GET(le32_to_cpu(set_feat_event->cdw_mem[0]), FEATURES_CDW10_FID);
 	cdw11 = le32_to_cpu(set_feat_event->cdw_mem[1]);
 
 	printf("Set Feature ID: 0x%02x (%s), value: 0x%08x\n", fid, nvme_feature_to_string(fid),
@@ -513,7 +522,7 @@ static void stdout_persistent_event_log(void *pevent_log_info, __u8 action, __u3
 
 	pevent_log_head = pevent_log_info;
 
-	nvme_show_pel_header(pevent_log_head, human);
+	pel_header(pevent_log_head, human);
 
 	printf("\n");
 	printf("\nPersistent Event Entries:\n");
@@ -1135,7 +1144,7 @@ static void stdout_subsystem_ctrls(nvme_subsystem_t s)
 	}
 }
 
-static void stdout_subsys_config(nvme_subsystem_t s, bool show_iopolicy)
+static void stdout_subsys_config(nvme_subsystem_t s)
 {
 	int len = strlen(nvme_subsystem_get_name(s));
 
@@ -1143,9 +1152,8 @@ static void stdout_subsys_config(nvme_subsystem_t s, bool show_iopolicy)
 	       nvme_subsystem_get_nqn(s));
 	printf("%*s   hostnqn=%s\n", len, " ",
 	       nvme_host_get_hostnqn(nvme_subsystem_get_host(s)));
-	if (show_iopolicy)
-		printf("%*s   iopolicy=%s\n", len, " ",
-				nvme_subsystem_get_iopolicy(s));
+	printf("%*s   iopolicy=%s\n", len, " ",
+		nvme_subsystem_get_iopolicy(s));
 
 	if (stdout_print_ops.flags & VERBOSE) {
 		printf("%*s   model=%s\n", len, " ",
@@ -1159,12 +1167,12 @@ static void stdout_subsys_config(nvme_subsystem_t s, bool show_iopolicy)
 	}
 }
 
-static void stdout_subsystem(struct nvme_global_ctx *ctx, bool show_ana)
+static void stdout_subsystem(nvme_root_t r, bool show_ana)
 {
 	nvme_host_t h;
 	bool first = true;
 
-	nvme_for_each_host(ctx, h) {
+	nvme_for_each_host(r, h) {
 		nvme_subsystem_t s;
 
 		nvme_for_each_subsystem(h, s) {
@@ -1180,8 +1188,7 @@ static void stdout_subsystem(struct nvme_global_ctx *ctx, bool show_ana)
 				printf("\n");
 			first = false;
 
-			stdout_subsys_config(s,
-					stdout_print_ops.flags & VERBOSE);
+			stdout_subsys_config(s);
 			printf("\\\n");
 
 			if (!show_ana || !stdout_subsystem_multipath(s))
@@ -1190,9 +1197,9 @@ static void stdout_subsystem(struct nvme_global_ctx *ctx, bool show_ana)
 	}
 }
 
-static void stdout_subsystem_list(struct nvme_global_ctx *ctx, bool show_ana)
+static void stdout_subsystem_list(nvme_root_t r, bool show_ana)
 {
-	stdout_subsystem(ctx, show_ana);
+	stdout_subsystem(r, show_ana);
 }
 
 static void stdout_registers_cap(struct nvme_bar_cap *cap)
@@ -1683,7 +1690,7 @@ static void stdout_ctrl_register_support(void *bar, bool fabrics, int offset, bo
 	if (human)
 		stdout_ctrl_register_human(offset, value, support);
 }
-
+#ifdef REGS
 void stdout_ctrl_registers(void *bar, bool fabrics)
 {
 	uint32_t value;
@@ -1710,7 +1717,7 @@ void stdout_ctrl_registers(void *bar, bool fabrics)
 		stdout_ctrl_register_support(bar, fabrics, offset, human, support);
 	}
 }
-
+#endif
 static void stdout_single_property(int offset, uint64_t value)
 {
 	stdout_ctrl_register_common(offset, value, true);
@@ -1747,20 +1754,6 @@ static void stdout_status(int status)
 			val);
 		break;
 	}
-}
-
-static void stdout_opcode_status(int status, bool admin, __u8 opcode)
-{
-	int val = nvme_status_get_value(status);
-	int type = nvme_status_get_type(status);
-
-	if (status >= 0 && type == NVME_STATUS_TYPE_NVME) {
-		fprintf(stderr, "NVMe status: %s(0x%x)\n",
-			nvme_opcode_status_to_string(val, admin, opcode), val);
-		return;
-	}
-
-	stdout_status(status);
 }
 
 static void stdout_error_status(int status, const char *msg, va_list ap)
@@ -2372,17 +2365,17 @@ static void stdout_id_ctrl_oncs(__le16 ctrl_oncs)
 	__u16 rsvd13 = oncs >> 13;
 	bool nszs = !!(oncs & NVME_CTRL_ONCS_NAMESPACE_ZEROES);
 	bool maxwzd = !!(oncs & NVME_CTRL_ONCS_WRITE_ZEROES_DEALLOCATE);
-	bool nvmafc  = !!(oncs & NVME_CTRL_ONCS_ALL_FAST_COPY);
-	bool nvmcsa  = !!(oncs & NVME_CTRL_ONCS_COPY_SINGLE_ATOMICITY);
-	bool nvmcpys = !!(oncs & NVME_CTRL_ONCS_COPY);
-	bool nvmvfys = !!(oncs & NVME_CTRL_ONCS_VERIFY);
-	bool tss = !!(oncs & NVME_CTRL_ONCS_TIMESTAMP);
-	bool reservs = !!(oncs & NVME_CTRL_ONCS_RESERVATIONS);
-	bool ssfs = !!(oncs & NVME_CTRL_ONCS_SAVE_FEATURES);
-	bool nvmwzsv = !!(oncs & NVME_CTRL_ONCS_WRITE_ZEROES);
-	bool nvmdsmsv = !!(oncs & NVME_CTRL_ONCS_DSM);
-	bool nvmwusv = !!(oncs & NVME_CTRL_ONCS_WRITE_UNCORRECTABLE);
-	bool nvmcmps  = !!(oncs & NVME_CTRL_ONCS_COMPARE);
+	bool afc  = !!(oncs & NVME_CTRL_ONCS_ALL_FAST_COPY);
+	bool csa  = !!(oncs & NVME_CTRL_ONCS_COPY_SINGLE_ATOMICITY);
+	bool copy = !!(oncs & NVME_CTRL_ONCS_COPY);
+	bool vrfy = !!(oncs & NVME_CTRL_ONCS_VERIFY);
+	bool tmst = !!(oncs & NVME_CTRL_ONCS_TIMESTAMP);
+	bool resv = !!(oncs & NVME_CTRL_ONCS_RESERVATIONS);
+	bool save = !!(oncs & NVME_CTRL_ONCS_SAVE_FEATURES);
+	bool wzro = !!(oncs & NVME_CTRL_ONCS_WRITE_ZEROES);
+	bool dsms = !!(oncs & NVME_CTRL_ONCS_DSM);
+	bool wunc = !!(oncs & NVME_CTRL_ONCS_WRITE_UNCORRECTABLE);
+	bool cmp  = !!(oncs & NVME_CTRL_ONCS_COMPARE);
 
 	if (rsvd13)
 		printf("  [15:13] : %#x\tReserved\n", rsvd13);
@@ -2391,27 +2384,27 @@ static void stdout_id_ctrl_oncs(__le16 ctrl_oncs)
 	printf("  [11:11] : %#x\tMaximum Write Zeroes with Deallocate %sSupported\n",
 		maxwzd, maxwzd ? "" : "Not ");
 	printf("  [10:10] : %#x\tAll Fast Copy %sSupported\n",
-		nvmafc, nvmafc ? "" : "Not ");
+		afc, afc ? "" : "Not ");
 	printf("  [9:9] : %#x\tCopy Single Atomicity %sSupported\n",
-		nvmcsa, nvmcsa ? "" : "Not ");
+		csa, csa ? "" : "Not ");
 	printf("  [8:8] : %#x\tCopy %sSupported\n",
-		nvmcpys, nvmcpys ? "" : "Not ");
+		copy, copy ? "" : "Not ");
 	printf("  [7:7] : %#x\tVerify %sSupported\n",
-		nvmvfys, nvmvfys ? "" : "Not ");
+		vrfy, vrfy ? "" : "Not ");
 	printf("  [6:6] : %#x\tTimestamp %sSupported\n",
-		tss, tss ? "" : "Not ");
+		tmst, tmst ? "" : "Not ");
 	printf("  [5:5] : %#x\tReservations %sSupported\n",
-		reservs, reservs ? "" : "Not ");
+		resv, resv ? "" : "Not ");
 	printf("  [4:4] : %#x\tSave and Select %sSupported\n",
-		ssfs, ssfs ? "" : "Not ");
-	printf("  [3:3] : %#x\tWrite Zeroes Support Variants\n",
-		nvmwzsv);
-	printf("  [2:2] : %#x\tDataset Management Support Variants\n",
-		nvmdsmsv);
-	printf("  [1:1] : %#x\tWrite Uncorrectable Support Variants\n",
-		nvmwusv);
-	printf("  [0:0] : %#x\tCompare Command %sSupported\n",
-		nvmcmps, nvmcmps ? "" : "Not ");
+		save, save ? "" : "Not ");
+	printf("  [3:3] : %#x\tWrite Zeroes %sSupported\n",
+		wzro, wzro ? "" : "Not ");
+	printf("  [2:2] : %#x\tData Set Management %sSupported\n",
+		dsms, dsms ? "" : "Not ");
+	printf("  [1:1] : %#x\tWrite Uncorrectable %sSupported\n",
+		wunc, wunc ? "" : "Not ");
+	printf("  [0:0] : %#x\tCompare %sSupported\n",
+		cmp, cmp ? "" : "Not ");
 	printf("\n");
 }
 
@@ -4340,7 +4333,7 @@ static void stdout_support_log_human(__u32 support, __u8 lid)
 		printf("  Establish Context and Read 512 Bytes of Header is %s\n",
 			(lidsp & 0x1) ? set : clr);
 		break;
-	case NVME_LOG_LID_DISCOVERY:
+	case NVME_LOG_LID_DISCOVER:
 		printf("  Extended Discovery Log Page Entry is %s\n",
 			(lidsp & 0x1) ? set : clr);
 		printf("  Port Local Entries Only is %s\n",
@@ -4348,7 +4341,7 @@ static void stdout_support_log_human(__u32 support, __u8 lid)
 		printf("  All NVM Subsystem Entries is %s\n",
 			(lidsp & 0x4) ? set : clr);
 		break;
-	case NVME_LOG_LID_HOST_DISCOVERY:
+	case NVME_LOG_LID_HOST_DISCOVER:
 		printf("  All Host Entries is %s\n",
 			(lidsp & 0x1) ? set : clr);
 		break;
@@ -4715,7 +4708,7 @@ static void stdout_sanitize_log(struct nvme_sanitize_log_page *sanitize,
 		stdout_sanitize_log_ssi(sanitize->ssi, status);
 }
 
-static void stdout_select_result(enum nvme_features_id fid, __u64 result)
+static void stdout_select_result(enum nvme_features_id fid, __u32 result)
 {
 	if (result & 0x1)
 		printf("  Feature is saveable\n");
@@ -4884,38 +4877,29 @@ static void stdout_directive_show_fields(__u8 dtype, __u8 doper,
 	}
 }
 
-static void stdout_directive_show(__u8 type, __u8 oper, __u16 spec, __u32 nsid, __u64 result,
+static void stdout_directive_show(__u8 type, __u8 oper, __u16 spec, __u32 nsid, __u32 result,
 				  void *buf, __u32 len)
 {
-	printf("dir-receive: type:%#x operation:%#x spec:%#x nsid:%#x result:%#"PRIx64"\n",
-		type, oper, spec, nsid, (uint64_t)result);
+	printf("dir-receive: type:%#x operation:%#x spec:%#x nsid:%#x result:%#x\n",
+		type, oper, spec, nsid, result);
 	if (stdout_print_ops.flags & VERBOSE)
 		stdout_directive_show_fields(type, oper, result, buf);
 	else if (buf)
 		d(buf, len, 16, 1);
 }
 
-static void stdout_lba_status_info(__u64 result)
+static void stdout_lba_status_info(__u32 result)
 {
 	printf("\tLBA Status Information Poll Interval (LSIPI)  : %u\n",
-	       (__u32)NVME_FEAT_LBAS_LSIPI(result));
+	       NVME_FEAT_LBAS_LSIPI(result));
 	printf("\tLBA Status Information Report Interval (LSIRI): %u\n",
-	       (__u32)NVME_FEAT_LBAS_LSIRI(result));
-}
-
-static bool line_equal(unsigned char *buf, int len, int width, int offset)
-{
-	if (!offset || len < offset + width || log_level >= LOG_DEBUG)
-		return false;
-
-	return !memcmp(buf + offset - width, buf + offset, width);
+	       NVME_FEAT_LBAS_LSIRI(result));
 }
 
 void stdout_d(unsigned char *buf, int len, int width, int group)
 {
 	int i, offset = 0;
 	char ascii[32 + 1] = { 0 };
-	bool omitting = false;
 
 	assert(width < sizeof(ascii));
 
@@ -4925,21 +4909,8 @@ void stdout_d(unsigned char *buf, int len, int width, int group)
 		printf("%3x", i);
 
 	for (i = 0; i < len; i++) {
-		if (!(i % width)) {
-			if (line_equal(buf, len, width, offset)) {
-				if (!omitting) {
-					omitting = true;
-					printf("\n*");
-				}
-				offset += width;
-				continue;
-			} else if (omitting) {
-				omitting = false;
-			}
+		if (!(i % width))
 			printf("\n%04x:", offset);
-		}
-		if (omitting)
-			continue;
 		if (i % group)
 			printf("%02x", buf[i]);
 		else
@@ -4951,8 +4922,6 @@ void stdout_d(unsigned char *buf, int len, int width, int group)
 			memset(ascii, 0, sizeof(ascii));
 		}
 	}
-	if (omitting)
-		printf("\n%04x:\n", offset);
 
 	if (strlen(ascii)) {
 		unsigned int b = width - (i % width);
@@ -5216,7 +5185,7 @@ static void stdout_feature_show_fields(enum nvme_features_id fid,
 		break;
 	case NVME_FEAT_FID_PLM_CONFIG:
 		printf("\tPredictable Latency Window Enabled: %s\n",
-		       NVME_FEAT_PLM_LPE(result) ? "True" : "False");
+		       NVME_FEAT_PLM_PLME(result) ? "True" : "False");
 		if (buf)
 			stdout_plm_config((struct nvme_plm_config *)buf);
 		break;
@@ -5500,7 +5469,7 @@ static bool stdout_simple_ns(const char *name, void *arg)
 	return true;
 }
 
-static void stdout_simple_list(struct nvme_global_ctx *ctx)
+static void stdout_simple_list(nvme_root_t r)
 {
 	struct nvme_resources res;
 	struct table_column columns[] = {
@@ -5521,7 +5490,7 @@ static void stdout_simple_list(struct nvme_global_ctx *ctx)
 		return;
 	}
 
-	nvme_resources_init(ctx, &res);
+	nvme_resources_init(r, &res);
 
 	strset_iterate(&res.namespaces, stdout_simple_ns, &res_t);
 
@@ -5686,11 +5655,11 @@ static bool stdout_detailed_ns(const char *name, void *arg)
 	return true;
 }
 
-static void stdout_detailed_list(struct nvme_global_ctx *ctx)
+static void stdout_detailed_list(nvme_root_t r)
 {
 	struct nvme_resources res;
 
-	nvme_resources_init(ctx, &res);
+	nvme_resources_init(r, &res);
 
 	printf("%-16s %-96s %-.16s\n", "Subsystem", "Subsystem-NQN", "Controllers");
 	printf("%-.16s %-.96s %-.16s\n", dash, dash, dash);
@@ -5714,12 +5683,12 @@ static void stdout_detailed_list(struct nvme_global_ctx *ctx)
 	nvme_resources_free(&res);
 }
 
-static void stdout_list_items(struct nvme_global_ctx *ctx)
+static void stdout_list_items(nvme_root_t r)
 {
 	if (stdout_print_ops.flags & VERBOSE)
-		stdout_detailed_list(ctx);
+		stdout_detailed_list(r);
 	else
-		stdout_simple_list(ctx);
+		stdout_simple_list(r);
 }
 
 static bool subsystem_iopolicy_filter(const char *name, void *arg)
@@ -6062,13 +6031,13 @@ static void stdout_subsystem_topology(nvme_subsystem_t s,
 	}
 }
 
-static void stdout_topology_tabular(struct nvme_global_ctx *ctx)
+static void stdout_topology_tabular(nvme_root_t r)
 {
 	nvme_host_t h;
 	nvme_subsystem_t s;
 	bool first = true;
 
-	nvme_for_each_host(ctx, h) {
+	nvme_for_each_host(r, h) {
 		nvme_for_each_subsystem(h, s) {
 			bool no_ctrl = true;
 			nvme_ctrl_t c;
@@ -6083,7 +6052,7 @@ static void stdout_topology_tabular(struct nvme_global_ctx *ctx)
 				printf("\n");
 			first = false;
 
-			stdout_subsys_config(s, true);
+			stdout_subsys_config(s);
 			printf("\n");
 
 			if (nvme_is_multipath(s))
@@ -6094,14 +6063,14 @@ static void stdout_topology_tabular(struct nvme_global_ctx *ctx)
 	}
 }
 
-static void stdout_simple_topology(struct nvme_global_ctx *ctx,
+static void stdout_simple_topology(nvme_root_t r,
 				   enum nvme_cli_topo_ranking ranking)
 {
 	nvme_host_t h;
 	nvme_subsystem_t s;
 	bool first = true;
 
-	nvme_for_each_host(ctx, h) {
+	nvme_for_each_host(r, h) {
 		nvme_for_each_subsystem(h, s) {
 			bool no_ctrl = true;
 			nvme_ctrl_t c;
@@ -6116,7 +6085,7 @@ static void stdout_simple_topology(struct nvme_global_ctx *ctx,
 				printf("\n");
 			first = false;
 
-			stdout_subsys_config(s, true);
+			stdout_subsys_config(s);
 			printf("\\\n");
 
 			if (nvme_is_multipath(s))
@@ -6127,19 +6096,19 @@ static void stdout_simple_topology(struct nvme_global_ctx *ctx,
 	}
 }
 
-static void stdout_topology_namespace(struct nvme_global_ctx *ctx)
+static void stdout_topology_namespace(nvme_root_t r)
 {
-	stdout_simple_topology(ctx, NVME_CLI_TOPO_NAMESPACE);
+	stdout_simple_topology(r, NVME_CLI_TOPO_NAMESPACE);
 }
 
-static void stdout_topology_ctrl(struct nvme_global_ctx *ctx)
+static void stdout_topology_ctrl(nvme_root_t r)
 {
-	stdout_simple_topology(ctx, NVME_CLI_TOPO_CTRL);
+	stdout_simple_topology(r, NVME_CLI_TOPO_CTRL);
 }
 
-static void stdout_topology_multipath(struct nvme_global_ctx *ctx)
+static void stdout_topology_multipath(nvme_root_t r)
 {
-	stdout_simple_topology(ctx, NVME_CLI_TOPO_MULTIPATH);
+	stdout_simple_topology(r, NVME_CLI_TOPO_MULTIPATH);
 }
 
 static void stdout_message(bool error, const char *msg, va_list ap)
@@ -6169,6 +6138,7 @@ static void stdout_key_value(const char *key, const char *val, va_list ap)
 	printf("%s: %s\n", key, value ? value : "Could not allocate string");
 }
 
+#ifdef FBS // jdh
 static void stdout_discovery_log(struct nvmf_discovery_log *log, int numrec)
 {
 	int i;
@@ -6211,7 +6181,7 @@ static void stdout_discovery_log(struct nvmf_discovery_log *log, int numrec)
 		}
 	}
 }
-
+#endif//jdh
 static void stdout_connect_msg(nvme_ctrl_t c)
 {
 	printf("connecting to device: %s\n", nvme_ctrl_get_name(c));
@@ -6304,7 +6274,7 @@ static void stdout_reachability_associations_log(struct nvme_reachability_associ
 			printf("rgid%u: %u\n", j, le32_to_cpu(log->rad[i].rgid[j]));
 	}
 }
-
+#ifdef FBS
 static void stdout_host_discovery_log(struct nvme_host_discover_log *log)
 {
 	__u32 i;
@@ -6364,7 +6334,6 @@ static void stdout_host_discovery_log(struct nvme_host_discover_log *log)
 		}
 	}
 }
-
 static void print_traddr(char *field, __u8 adrfam, __u8 *traddr)
 {
 	int af = AF_INET;
@@ -6415,6 +6384,7 @@ static void stdout_ave_discovery_log(struct nvme_ave_discover_log *log)
 		}
 	}
 }
+#endif
 
 static void stdout_pull_model_ddc_req_log(struct nvme_pull_model_ddc_req_log *log)
 {
@@ -6427,7 +6397,7 @@ static void stdout_pull_model_ddc_req_log(struct nvme_pull_model_ddc_req_log *lo
 	d((unsigned char *)log->osp, osp_len, 16, 1);
 }
 
-static void stdout_relatives(struct nvme_global_ctx *ctx, const char *name)
+static void stdout_relatives(nvme_root_t r, const char *name)
 {
 	struct nvme_resources res;
 	struct htable_ns_iter it;
@@ -6452,7 +6422,7 @@ static void stdout_relatives(struct nvme_global_ctx *ctx, const char *name)
 		return;
 	}
 
-	nvme_resources_init(ctx, &res);
+	nvme_resources_init(r, &res);
 
 	if (block) {
 		fprintf(stderr, "Namespace %s has parent controller(s):", name);
@@ -6586,7 +6556,7 @@ static void stdout_log(const char *devname, struct nvme_get_log_args *args)
 	case NVME_LOG_LID_REACHABILITY_ASSOCIATIONS:
 		stdout_reachability_associations_log(reachability_associations_log, args->len);
 		break;
-	case NVME_LOG_LID_CHANGED_ALLOC_NS:
+	case NVME_LOG_LID_CHANGED_ALLOC_NS_LIST:
 		stdout_changed_ns_list_log((struct nvme_ns_list *)args->log, devname, true);
 		break;
 	case NVME_LOG_LID_FDP_CONFIGS:
@@ -6601,15 +6571,17 @@ static void stdout_log(const char *devname, struct nvme_get_log_args *args)
 	case NVME_LOG_LID_FDP_EVENTS:
 		stdout_fdp_events((struct nvme_fdp_events_log *)args->log);
 		break;
-	case NVME_LOG_LID_DISCOVERY:
+#ifdef FBS
+	case NVME_LOG_LID_DISCOVER:
 		stdout_discovery_log(discovery_log, le64_to_cpu(discovery_log->numrec));
 		break;
-	case NVME_LOG_LID_HOST_DISCOVERY:
+	case NVME_LOG_LID_HOST_DISCOVER:
 		stdout_host_discovery_log((struct nvme_host_discover_log *)args->log);
 		break;
-	case NVME_LOG_LID_AVE_DISCOVERY:
+	case NVME_LOG_LID_AVE_DISCOVER:
 		stdout_ave_discovery_log((struct nvme_ave_discover_log *)args->log);
 		break;
+#endif
 	case NVME_LOG_LID_PULL_MODEL_DDC_REQ:
 		stdout_pull_model_ddc_req_log((struct nvme_pull_model_ddc_req_log *)args->log);
 		break;
@@ -6633,10 +6605,14 @@ static struct print_ops stdout_print_ops = {
 	.boot_part_log			= stdout_boot_part_log,
 	.phy_rx_eom_log			= stdout_phy_rx_eom_log,
 	.ctrl_list			= stdout_list_ctrl,
+#ifdef REGS
 	.ctrl_registers			= stdout_ctrl_registers,
 	.ctrl_register			= stdout_ctrl_register,
+#endif
 	.directive			= stdout_directive_show,
+#ifdef FBS
 	.discovery_log			= stdout_discovery_log,
+#endif
 	.effects_log_list		= stdout_effects_log_pages,
 	.endurance_group_event_agg_log	= stdout_endurance_group_event_agg_log,
 	.endurance_group_list		= stdout_endurance_group_list,
@@ -6700,8 +6676,10 @@ static struct print_ops stdout_print_ops = {
 	.dispersed_ns_psub_log		= stdout_dispersed_ns_psub_log,
 	.reachability_groups_log	= stdout_reachability_groups_log,
 	.reachability_associations_log	= stdout_reachability_associations_log,
+#ifdef FBS
 	.host_discovery_log		= stdout_host_discovery_log,
 	.ave_discovery_log		= stdout_ave_discovery_log,
+#endif
 	.pull_model_ddc_req_log		= stdout_pull_model_ddc_req_log,
 	.log				= stdout_log,
 
@@ -6719,7 +6697,6 @@ static struct print_ops stdout_print_ops = {
 	.show_message			= stdout_message,
 	.show_perror			= stdout_perror,
 	.show_status			= stdout_status,
-	.show_opcode_status		= stdout_opcode_status,
 	.show_error_status		= stdout_error_status,
 	.show_key_value			= stdout_key_value,
 };

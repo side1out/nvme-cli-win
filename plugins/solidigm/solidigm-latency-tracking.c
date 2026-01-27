@@ -15,7 +15,11 @@
 #include "nvme.h"
 #include "libnvme.h"
 #include "plugin.h"
+#ifdef WINDOWS_GCC
+#include <windows/types.h>
+#else
 #include "linux/types.h"
+#endif
 #include "nvme-print.h"
 #include "solidigm-util.h"
 
@@ -42,7 +46,7 @@ struct config {
 };
 
 struct latency_tracker {
-	struct nvme_transport_handle *hdl;
+	int fd;
 	__u8 uuid_index;
 	struct config cfg;
 	nvme_print_flags_t print_flags;
@@ -269,16 +273,27 @@ static void latency_tracker_parse(struct latency_tracker *lt)
 #define LATENCY_TRACKING_FID 0xe2
 #define LATENCY_TRACKING_FID_DATA_LEN 32
 
-static int latency_tracking_is_enable(struct latency_tracker *lt, __u64 *enabled)
+static int latency_tracking_is_enable(struct latency_tracker *lt, __u32 *enabled)
 {
-	return nvme_get_features(lt->hdl, 0, LATENCY_TRACKING_FID, 0, 0,
-			lt->uuid_index, NULL,
-			LATENCY_TRACKING_FID_DATA_LEN, enabled);
+	struct nvme_get_features_args args_get = {
+		.args_size	= sizeof(args_get),
+		.fd		= lt->fd,
+		.uuidx		= lt->uuid_index,
+		.fid		= LATENCY_TRACKING_FID,
+		.nsid		= 0,
+		.sel		= 0,
+		.cdw11		= 0,
+		.data_len	= LATENCY_TRACKING_FID_DATA_LEN,
+		.data		= NULL,
+		.timeout	= NVME_DEFAULT_IOCTL_TIMEOUT,
+		.result		= enabled,
+	};
+	return nvme_get_features(&args_get);
 }
 
 static int latency_tracking_enable(struct latency_tracker *lt)
 {
-	__u64 result;
+	__u32 result;
 	int err;
 
 	if (!(lt->cfg.enable || lt->cfg.disable))
@@ -289,9 +304,23 @@ static int latency_tracking_enable(struct latency_tracker *lt)
 		return -EINVAL;
 	}
 
-	err = nvme_set_features(lt->hdl, 0, LATENCY_TRACKING_FID, 0,
-			lt->cfg.enable, 0, 0, lt->uuid_index, 0, NULL,
-			LATENCY_TRACKING_FID_DATA_LEN, &result);
+	struct nvme_set_features_args args_set = {
+		.args_size	= sizeof(args_set),
+		.fd		= lt->fd,
+		.uuidx		= lt->uuid_index,
+		.fid		= LATENCY_TRACKING_FID,
+		.nsid		= 0,
+		.cdw11		= lt->cfg.enable,
+		.cdw12		= 0,
+		.save		= 0,
+		.cdw15		= 0,
+		.data_len	= LATENCY_TRACKING_FID_DATA_LEN,
+		.data		= NULL,
+		.timeout	= NVME_DEFAULT_IOCTL_TIMEOUT,
+		.result		= &result,
+	};
+
+	err = nvme_set_features(&args_set);
 	if (err > 0) {
 		nvme_show_status(err);
 	} else if (err < 0) {
@@ -311,7 +340,6 @@ static int latency_tracking_enable(struct latency_tracker *lt)
 
 static int latency_tracker_get_log(struct latency_tracker *lt)
 {
-	struct nvme_passthru_cmd cmd;
 	int err;
 
 	if (lt->cfg.read && lt->cfg.write) {
@@ -322,16 +350,25 @@ static int latency_tracker_get_log(struct latency_tracker *lt)
 	if (!(lt->cfg.read || lt->cfg.write))
 		return 0;
 
-	nvme_init_get_log(&cmd, NVME_NSID_ALL,
-			  lt->cfg.write ? WRITE_LOG_ID : READ_LOG_ID,
-			  NVME_CSI_NVM, &lt->stats, sizeof(lt->stats));
-	cmd.cdw10 |= NVME_FIELD_ENCODE(lt->cfg.type,
-				       NVME_LOG_CDW10_LSP_SHIFT,
-				       NVME_LOG_CDW10_LSP_MASK);
-	cmd.cdw14 |= NVME_FIELD_ENCODE(lt->uuid_index,
-				       NVME_LOG_CDW14_UUID_SHIFT,
-				       NVME_LOG_CDW14_UUID_MASK);
-	err = nvme_get_log(lt->hdl, &cmd, false, NVME_LOG_PAGE_PDU_SIZE);
+	struct nvme_get_log_args args = {
+		.lpo	= 0,
+		.result = NULL,
+		.log	= &lt->stats,
+		.args_size = sizeof(args),
+		.fd	= lt->fd,
+		.uuidx	= lt->uuid_index,
+		.timeout = NVME_DEFAULT_IOCTL_TIMEOUT,
+		.lid	= lt->cfg.write ? WRITE_LOG_ID : READ_LOG_ID,
+		.len	= sizeof(lt->stats),
+		.nsid	= NVME_NSID_ALL,
+		.csi	= NVME_CSI_NVM,
+		.lsi	= NVME_LOG_LSI_NONE,
+		.lsp	= lt->cfg.type,
+		.rae	= false,
+		.ot	= false,
+	};
+
+	err = nvme_get_log(&args);
 	if (err)
 		return err;
 
@@ -344,13 +381,12 @@ static int latency_tracker_get_log(struct latency_tracker *lt)
 	return err;
 }
 
-int solidigm_get_latency_tracking_log(int argc, char **argv, struct command *acmd,
+int solidigm_get_latency_tracking_log(int argc, char **argv, struct command *cmd,
 				      struct plugin *plugin)
 {
 	const char *desc = "Get and Parse Solidigm Latency Tracking Statistics log.";
-	_cleanup_nvme_global_ctx_ struct nvme_global_ctx *ctx = NULL;
-	_cleanup_nvme_transport_handle_ struct nvme_transport_handle *hdl = NULL;
-	__u64 enabled;
+	struct nvme_dev *dev;
+	__u32 enabled;
 	int err;
 
 	struct latency_tracker lt = {
@@ -373,40 +409,49 @@ int solidigm_get_latency_tracking_log(int argc, char **argv, struct command *acm
 		OPT_END()
 	};
 
-	err = parse_and_open(&ctx, &hdl, argc, argv, desc, opts);
+	err = parse_and_open(&dev, argc, argv, desc, opts);
 	if (err)
 		return err;
 
-	lt.hdl = hdl;
+	lt.fd = dev_fd(dev);
 
 	err = validate_output_format(lt.cfg.output_format, &lt.print_flags);
 	if (err < 0) {
 		fprintf(stderr, "Invalid output format '%s'\n", lt.cfg.output_format);
+		dev_close(dev);
 		return -EINVAL;
 	}
 
 	if (lt.cfg.type > 0xf) {
 		fprintf(stderr, "Invalid Log type value '%d'\n", lt.cfg.type);
+		dev_close(dev);
 		return -EINVAL;
 	}
 
 	if (lt.cfg.type && !(lt.cfg.read || lt.cfg.write)) {
 		fprintf(stderr, "Log type option valid only when retrieving statistics\n");
+		dev_close(dev);
 		return -EINVAL;
 	}
 
-	sldgm_get_uuid_index(hdl, &lt.uuid_index);
+	sldgm_get_uuid_index(dev, &lt.uuid_index);
 
 	err = latency_tracking_enable(&lt);
-	if (err)
+	if (err) {
+		dev_close(dev);
 		return err;
+	}
 
 	err = latency_tracker_get_log(&lt);
-	if (err)
+	if (err) {
+		dev_close(dev);
 		return err;
+	}
 
-	if ((lt.cfg.read || lt.cfg.write || lt.cfg.enable || lt.cfg.disable))
+	if ((lt.cfg.read || lt.cfg.write || lt.cfg.enable || lt.cfg.disable)) {
+		dev_close(dev);
 		return 0;
+	}
 
 	err = latency_tracking_is_enable(&lt, &enabled);
 	if (!err) {
@@ -420,12 +465,14 @@ int solidigm_get_latency_tracking_log(int argc, char **argv, struct command *acm
 		} else if (lt.print_flags == BINARY) {
 			putchar(enabled);
 		} else {
-			printf("Latency Statistics Tracking (UUID-idx:%d, FID:0x%X) is currently %"PRIu64".\n",
-			       lt.uuid_index, LATENCY_TRACKING_FID,
-			       (uint64_t)enabled);
+			printf("Latency Statistics Tracking (UUID-idx:%d, FID:0x%X) is currently %i.\n",
+			       lt.uuid_index, LATENCY_TRACKING_FID, enabled);
 		}
 	} else {
 		fprintf(stderr, "Could not read feature id 0xE2.\n");
 	}
+	/* Redundant close() to make static code analysis happy */
+	close(dev->direct.fd);
+	dev_close(dev);
 	return err;
 }

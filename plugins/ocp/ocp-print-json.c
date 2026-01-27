@@ -226,15 +226,11 @@ static void json_smart_extended_log_v1(struct ocp_smart_extended_log *log)
 	case 0 ... 1:
 		break;
 	default:
-	case 6:
-		json_object_add_value_uint(root, "Form factor",
-						log->form_factor);
-		json_object_add_value_uint64(root, "Die use badnandblock raw",
-			int48_to_long(log->die_in_use_bad_nand_block_raw));
-		json_object_add_value_uint(root, "Die use badnandblock normal",
-			le16_to_cpu(log->die_in_use_bad_nand_block_normalized));
-		fallthrough;
-	case 5:
+	case 4:
+		json_object_add_value_uint(root, "NVMe Command Set Errata Version",
+						log->nvme_cmdset_errata_version);
+		json_object_add_value_uint(root, "Lowest Permitted Firmware Revision",
+						le64_to_cpu(log->lowest_permitted_fw_rev));
 		json_object_add_value_uint(root, "NVMe Over Pcie Errata Version",
 						log->nvme_over_pcie_errate_version);
 		json_object_add_value_uint(root, "NVMe Mi Errata Version",
@@ -280,12 +276,6 @@ static void json_smart_extended_log_v1(struct ocp_smart_extended_log *log)
 		for (i = 0; i < 64; i++)
 			ascii += sprintf(ascii, "%c", log->dssd_firmware_build_label[i]);
 		json_object_add_value_string(root, "Dssd firmware build label", ascii_arr);
-		fallthrough;
-	case 4:
-		json_object_add_value_uint(root, "NVMe Command Set Errata Version",
-						log->nvme_cmdset_errata_version);
-		json_object_add_value_uint(root, "Lowest Permitted Firmware Revision",
-						le64_to_cpu(log->lowest_permitted_fw_rev));
 		fallthrough;
 	case 2 ... 3:
 		json_object_add_value_uint(root, "Errata Version Field",
@@ -398,7 +388,11 @@ static void json_smart_extended_log_v2(struct ocp_smart_extended_log *log)
 	case 0 ... 1:
 		break;
 	default:
-	case 5:
+	case 4:
+		json_object_add_value_uint(root, "nvme_command_set_errata_version",
+						log->nvme_cmdset_errata_version);
+		json_object_add_value_uint(root, "lowest_permitted_firmware_revision",
+						le64_to_cpu(log->lowest_permitted_fw_rev));
 		json_object_add_value_uint(root, "nvme_over_pcie_errata_version",
 						log->nvme_over_pcie_errate_version);
 		json_object_add_value_uint(root, "nvme_mi_errata_version",
@@ -445,12 +439,6 @@ static void json_smart_extended_log_v2(struct ocp_smart_extended_log *log)
 			ascii += sprintf(ascii, "%c", log->dssd_firmware_build_label[i]);
 		json_object_add_value_string(root, "dssd_firmware_build_label", ascii_arr);
 		fallthrough;
-	case 4:
-		json_object_add_value_uint(root, "nvme_command_set_errata_version",
-						log->nvme_cmdset_errata_version);
-		json_object_add_value_uint(root, "lowest_permitted_firmware_revision",
-						le64_to_cpu(log->lowest_permitted_fw_rev));
-		fallthrough;
 	case 2 ... 3:
 		json_object_add_value_uint(root, "errata_version_field",
 						log->dssd_errata_version);
@@ -490,7 +478,7 @@ static void json_telemetry_log(struct ocp_telemetry_parse_options *options)
 	print_ocp_telemetry_json(options);
 }
 
-static void json_c3_log(struct nvme_transport_handle *hdl, struct ssd_latency_monitor_log *log_data)
+static void json_c3_log(struct nvme_dev *dev, struct ssd_latency_monitor_log *log_data)
 {
 	struct json_object *root;
 	char ts_buf[128];
@@ -661,7 +649,7 @@ static void json_c3_log(struct nvme_transport_handle *hdl, struct ssd_latency_mo
 	json_free_object(root);
 }
 
-static void json_c5_log(struct nvme_transport_handle *hdl, struct unsupported_requirement_log *log_data)
+static void json_c5_log(struct nvme_dev *dev, struct unsupported_requirement_log *log_data)
 {
 	int j;
 	struct json_object *root;
@@ -1043,7 +1031,7 @@ static void json_c9_log(struct telemetry_str_log_format *log_data, __u8 *log_dat
 	json_free_object(root);
 }
 
-static void json_c7_log(struct nvme_transport_handle *hdl, struct tcg_configuration_log *log_data)
+static void json_c7_log(struct nvme_dev *dev, struct tcg_configuration_log *log_data)
 {
 	int j;
 	struct json_object *root;

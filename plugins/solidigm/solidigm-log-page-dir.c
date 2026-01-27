@@ -40,19 +40,29 @@ static void init_lid_dir(struct lid_dir *lid_dir)
 	}
 }
 
-static int get_supported_log_pages_log(struct nvme_transport_handle *hdl, int uuid_index,
+static int get_supported_log_pages_log(struct nvme_dev *dev, int uuid_index,
 				       struct nvme_supported_log_pages *supported)
 {
-	struct nvme_passthru_cmd cmd;
-
 	memset(supported, 0, sizeof(*supported));
-	nvme_init_get_log(&cmd, NVME_NSID_ALL,
-			  NVME_LOG_LID_SUPPORTED_LOG_PAGES, NVME_CSI_NVM,
-			  supported, sizeof(*supported));
-	cmd.cdw14 |= NVME_FIELD_ENCODE(uuid_index,
-				       NVME_LOG_CDW14_UUID_SHIFT,
-				       NVME_LOG_CDW14_UUID_MASK);
-	return nvme_get_log(hdl, &cmd, false, NVME_LOG_PAGE_PDU_SIZE);
+	struct nvme_get_log_args args = {
+		.lpo = 0,
+		.result = NULL,
+		.log = supported,
+		.args_size = sizeof(args),
+		.fd = dev_fd(dev),
+		.timeout = NVME_DEFAULT_IOCTL_TIMEOUT,
+		.lid = NVME_LOG_LID_SUPPORTED_LOG_PAGES,
+		.len = sizeof(*supported),
+		.nsid = NVME_NSID_ALL,
+		.csi = NVME_CSI_NVM,
+		.lsi = NVME_LOG_LSI_NONE,
+		.lsp = 0,
+		.uuidx = uuid_index,
+		.rae = false,
+		.ot = false,
+	};
+
+	return nvme_get_log(&args);
 }
 
 static struct lid_dir *get_standard_lids(struct nvme_supported_log_pages *supported)
@@ -178,7 +188,7 @@ static void supported_log_pages_json(struct lid_dir *lid_dir[SOLIDIGM_MAX_UUID +
 	printf("\n");
 }
 
-int solidigm_get_log_page_directory_log(int argc, char **argv, struct command *acmd,
+int solidigm_get_log_page_directory_log(int argc, char **argv, struct command *cmd,
 					struct plugin *plugin)
 {
 	const int NO_UUID_INDEX = 0;
@@ -191,10 +201,9 @@ int solidigm_get_log_page_directory_log(int argc, char **argv, struct command *a
 		OPT_END()
 	};
 
-	_cleanup_nvme_global_ctx_ struct nvme_global_ctx *ctx = NULL;
-	_cleanup_nvme_transport_handle_ struct nvme_transport_handle *hdl = NULL;
+	_cleanup_nvme_dev_ struct nvme_dev *dev = NULL;
+	int err = parse_and_open(&dev, argc, argv, description, options);
 
-	int err = parse_and_open(&ctx, &hdl, argc, argv, description, options);
 	if (err)
 		return err;
 
@@ -202,13 +211,13 @@ int solidigm_get_log_page_directory_log(int argc, char **argv, struct command *a
 	struct nvme_id_uuid_list uuid_list = { 0 };
 	struct nvme_supported_log_pages supported = { 0 };
 
-	err = get_supported_log_pages_log(hdl, NO_UUID_INDEX, &supported);
+	err = get_supported_log_pages_log(dev, NO_UUID_INDEX, &supported);
 
 	if (!err) {
 		lid_dirs[NO_UUID_INDEX] = get_standard_lids(&supported);
 
 		// Assume VU logs are the Solidigm log pages if UUID not supported.
-		if (!nvme_identify_uuid_list(hdl, &uuid_list)) {
+		if (nvme_identify_uuid(dev_fd(dev), &uuid_list)) {
 			struct lid_dir *solidigm_lid_dir = get_solidigm_lids(&supported);
 
 			// Transfer supported Solidigm lids to lid directory at UUID index 0
@@ -224,12 +233,12 @@ int solidigm_get_log_page_directory_log(int argc, char **argv, struct command *a
 			ocp_find_uuid_index(&uuid_list, &ocp_idx);
 
 			if (sldgm_idx && (sldgm_idx <= SOLIDIGM_MAX_UUID)) {
-				err = get_supported_log_pages_log(hdl, sldgm_idx, &supported);
+				err = get_supported_log_pages_log(dev, sldgm_idx, &supported);
 				if (!err)
 					lid_dirs[sldgm_idx] = get_solidigm_lids(&supported);
 			}
 			if (ocp_idx && (ocp_idx <= SOLIDIGM_MAX_UUID)) {
-				err = get_supported_log_pages_log(hdl, ocp_idx, &supported);
+				err = get_supported_log_pages_log(dev, ocp_idx, &supported);
 				if (!err)
 					lid_dirs[ocp_idx] = get_ocp_lids(&supported);
 			}

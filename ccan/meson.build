@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-sources = [
+ccan_sources = files([
     'ccan/hash/hash.c',
     'ccan/htable/htable.c',
     'ccan/ilog/ilog.c',
@@ -9,21 +9,18 @@ sources = [
     'ccan/str/debug.c',
     'ccan/str/str.c',
     'ccan/strset/strset.c',
-]
+])
 
 if get_option('buildtype') == 'debug'
-    add_project_arguments('-DCCAN_LIST_DEBUG=1', language: ['c'])
-    add_project_arguments('-DCCAN_STR_DEBUG=1', language: ['c'])
+    add_project_arguments('-DCCAN_LIST_DEBUG=1',  language : ['c'])
+    add_project_arguments('-DCCAN_STR_DEBUG=1',  language : ['c'])
 endif
 
-libccan = static_library(
-    'ccan',
-    sources,
-    install: false,
-    dependencies: [config_dep, ],
+# For newer build system: create dependency object
+ccan_dep = declare_dependency(
+    sources: ccan_sources,
+    include_directories: include_directories('.'),
 )
 
-ccan_dep = declare_dependency(
-    include_directories: '.',
-    link_with: libccan,
-)
+# For backwards compatibility: add to global sources
+sources += ccan_sources

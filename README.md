@@ -83,6 +83,16 @@ cd nvme-cli-win
 cmd /c "mklink /J subprojects\libnvme ..\libnvme-win"
 ```
 
+**VS Code Project:**
+
+This repository includes a complete VS Code workspace configuration with:
+- Build tasks (Meson configure, build, clean)
+- C/C++ IntelliSense configuration
+- Debugging launch configurations
+- Recommended extensions
+
+Simply open the folder in VS Code to use the pre-configured development environment.
+
 **Build:**
 ```bash
 # Configure (debug build)
@@ -101,6 +111,42 @@ meson compile -C .vscbuild
 ```bash
 .vscbuild/nvme.exe --version
 ```
+
+### Windows Usage - Syntax Differences
+
+**Important:** On Windows, you specify NVMe devices using the physical drive number instead of Linux-style `/dev/nvme*` paths.
+
+**Device Specification:**
+- **Linux:** `/dev/nvme0`, `/dev/nvme0n1`, etc.
+- **Windows:** `0`, `1`, `2`, etc. (PhysicalDrive number)
+
+**Example Commands:**
+
+```bash
+# List all NVMe devices
+nvme list
+
+# Identify controller on PhysicalDrive0
+nvme id-ctrl 0
+
+# Get SMART/health information
+nvme smart-log 0
+
+# Identify namespace 1
+nvme id-ns 0 -n 1
+
+# Get firmware log
+nvme fw-log 0
+
+# Download firmware (uses Windows Storage API)
+nvme fw-download 0 --fw=firmware.bin
+
+# Activate firmware slot 1
+nvme fw-activate 0 -s 1 -a 3
+```
+
+**Finding Your Drive Number:**
+Use Device Manager → Disk Drives, or run `nvme list` to see all NVMe devices with their PhysicalDrive numbers.
 
 ### Windows NVMe Passthrough Behavior
 

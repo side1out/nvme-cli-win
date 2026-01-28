@@ -1,4 +1,18 @@
 # nvme-cli
+
+## Windows Fork
+
+**Maintainer:** James Huey <side1out@yahoo.com>  
+**Repository:** https://github.com/side1out/nvme-cli-win (planned)  
+**Based on:** nvme-cli v2.15 (upstream: https://github.com/linux-nvme/nvme-cli)  
+**License:** GPL-2.0-or-later
+
+This is a Windows port of the official Linux nvme-cli tool, enabling NVMe device management on Windows systems through native Windows Storage APIs.
+
+**Purpose:** This project provides a Windows-based version of nvme-cli for users who are comfortable and familiar with the nvme-cli command-line interface and output format. While it is well understood that Windows imposes significant limitations on NVMe device access compared to Linux (many admin commands are blocked for system stability), there is still sufficient benefit in providing a familiar tool for read-only operations, diagnostics, and firmware management on Windows platforms.
+
+---
+
 ![Coverity Scan Build Status](https://scan.coverity.com/projects/24883/badge.svg)
 ![MesonBuild](https://github.com/linux-nvme/nvme-cli/actions/workflows/build.yml/badge.svg)
 ![GitHub](https://img.shields.io/github/license/linux-nvme/nvme-cli)
@@ -11,9 +25,7 @@
 
 NVM-Express user space tooling for Linux.
 
-## Windows Port
-
-This repository contains a Windows port of nvme-cli and libnvme, enabling NVMe management on Windows systems.
+## Windows Port Overview
 
 ### Architecture
 
@@ -89,6 +101,42 @@ meson compile -C .vscbuild
 ```bash
 .vscbuild/nvme.exe --version
 ```
+
+### Windows NVMe Passthrough Behavior
+
+**⚠️ Important:** The Windows port attempts NVMe passthrough operations at all times, even when the operation may be expected to fail due to Windows security policies or driver restrictions. This is intentional behavior to match the Linux implementation's approach.
+
+**Common Error Messages:**
+
+When Windows blocks NVMe passthrough commands (typically due to security policies or driver limitations), you will see error messages from the `print_last_error()` function. The most common error is **Error 1: Incorrect function**, which indicates the Windows NVMe driver does not support the requested passthrough operation.
+
+For example, attempting to create a namespace (which Windows typically blocks):
+
+```
+C:\> nvme create-ns /dev/nvme0 --nsze=0x10000 --ncap=0x10000
+
+NVMEPassthrough DeviceIoControl failed: (1) Incorrect function.
+```
+
+Other error codes you may encounter:
+
+```
+NVMEPassthrough DeviceIoControl failed: (5) Access is denied.
+NVMEPassthrough DeviceIoControl failed: (50) The request is not supported.
+NVMEPassthrough DeviceIoControl failed: (87) The parameter is incorrect.
+```
+
+**What This Means:**
+
+These errors are expected in many Windows environments and indicate:
+- Windows security policies are blocking direct NVMe command access
+- The NVMe driver does not support the requested passthrough operation
+- Administrative privileges may be required (though not always sufficient)
+- Some operations are restricted by the Windows Storage Stack
+
+**This is normal behavior** - the library will attempt the operation and report the error. Some commands may work while others are blocked, depending on your specific Windows configuration, NVMe controller, and security policies.
+
+**Note:** Unlike Linux where most NVMe commands can be issued directly with appropriate permissions, Windows implements stricter controls on storage device access for system stability and security reasons.
 
 ### Windows Port Development Notes
 

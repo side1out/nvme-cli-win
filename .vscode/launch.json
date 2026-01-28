@@ -6,10 +6,10 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/.vscbuild/nvme.exe",
-            //"args": ["list"],
+            "args": ["list"],
             //"args": ["id-ctrl","3"],
             // nvme create-ns /dev/nvme0 --nsze=6104741 --ncap=6104741 --flbas=0 -dps=0
-            "args": ["create-ns", "3", "--nsze=6104741", "--ncap=6104741", "--flbas=0", "-dps=0"],
+            //"args": ["create-ns", "3", "--nsze=6104741", "--ncap=6104741", "--flbas=0", "-dps=0"],
             //"args": ["fw-commit", "3", "--action=1"],
             //"args": ["get-log", "2", "--log-id=0x08", "--log-len=512"], //get-log 2 --log-id=2 --log-len=4096
             "stopAtEntry": false,
@@ -18,7 +18,7 @@
                 {
                     // Append the relative path to your DLLs directory to the PATH variable
                     "name": "PATH",
-                    "value": "${env:PATH};${workspaceFolder}\\subprojects\\libnvme\\.vscbuild\\src"
+                    "value": "${env:PATH};${workspaceFolder}\\.vscbuild\\subprojects\\libnvme\\src"
                 }
             ],
             "externalConsole": false,

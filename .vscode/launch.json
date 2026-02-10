@@ -18,7 +18,7 @@
                 {
                     // Append the relative path to your DLLs directory to the PATH variable
                     "name": "PATH",
-                    "value": "${env:PATH};${workspaceFolder}\\subprojects\\libnvme\\.vscbuild\\src"
+                    "value": "${env:PATH};${workspaceFolder}\\.vscbuild\\subprojects\\libnvme\\src"
                 }
             ],
             "externalConsole": false,
